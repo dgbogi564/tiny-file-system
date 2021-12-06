@@ -13,4 +13,3 @@ tfs: $(OBJ)
 .PHONY: clean
 clean:
 	rm -f *.o tfs
-
