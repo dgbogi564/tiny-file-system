@@ -2,7 +2,7 @@
 
 # check if directory was supplied
 if [ $# -eq 0 ]; then
-    echo "provide a directory path you wish to mount"
+    echo "provide directory you wish to mount"
     exit 1
 fi
 if [ $# -ne 1 ]; then
@@ -14,9 +14,9 @@ echo "\"$1\" doesn't exist, creating directory..."
 mkdir -p "$1"
 
 # compile and run tiny file system
-cd src || exit
+cd src || cd ../src || exit
 make clean
-make
+make || exit
 ./tfs -d -s "$1"
 
 # check if tiny file system was mounted successfully

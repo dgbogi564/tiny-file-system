@@ -2,7 +2,7 @@
 
 # check if directory was supplied
 if [ $# -eq 0 ]; then
-    echo "provide a directory path you wish to unmount"
+    echo "provide directory you wish to unmount"
     exit 1
 fi
 if [ $# -ne 1 ]; then
