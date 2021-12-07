@@ -43,7 +43,7 @@ int get_avail_ino() {
 
     // Step 1: Read inode bitmap from disk
     errno = 0;
-    if(bio_read(superblock.i_bitmap_blk, i_bitmap) == -1 && errno) {
+    if((bio_read(superblock.i_bitmap_blk, i_bitmap) < 0) && errno) {
         ERROR("Failed to read disk");
         return -1;
     }
@@ -58,7 +58,7 @@ int get_avail_ino() {
 
     // Step 3: Update inode bitmap and write to disk
     set_bitmap(i_bitmap, avail_ino);
-    if(bio_write(superblock.i_bitmap_blk, i_bitmap) == -1 && errno) {
+    if((bio_write(superblock.i_bitmap_blk, i_bitmap) < 0) && errno) {
         ERROR("Failed to write to disk");
         return -1;
     }
@@ -75,7 +75,7 @@ int get_avail_blkno() {
 
     // Step 1: Read data block bitmap from disk
     errno = 0;
-    if(bio_read(superblock.d_bitmap_blk, d_bitmap) == -1 && errno) {
+    if((bio_read(superblock.d_bitmap_blk, d_bitmap) < 0) && errno) {
         ERROR("Failed to read disk");
         return -1;
     }
@@ -90,7 +90,7 @@ int get_avail_blkno() {
 
     // Step 3: Update data block bitmap and write to disk
     set_bitmap(d_bitmap, avail_blkno);
-    if(bio_write(superblock.i_bitmap_blk, d_bitmap) == -1 && errno) {
+    if((bio_write(superblock.i_bitmap_blk, d_bitmap) < 0) && errno) {
         ERROR("Failed to write to disk");
         return -1;
     }
@@ -203,8 +203,9 @@ int tfs_mkfs() {
     };
 
     memcpy(blk, &superblock, sizeof(struct superblock));
-    if(bio_write(0, blk) == -1 && errno) {
+    if((bio_write(0, blk) < 0) && errno) {
         ERROR("Failed to write to disk");
+        free(blk);
         return -1;
     }
 
@@ -215,27 +216,36 @@ int tfs_mkfs() {
     const int d_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
     int d_blks = (3/d_per_blk) + ((3%d_per_blk) != 0);
     static struct dirent dirent[3];
-    const static char name[3][252] = { "/", ".", ".." };
-    for (int i = 0; i < 3; ++i) {
-        dirent[i] = (struct dirent) {
-            .ino = i,
-            .valid = 1
-        };
-        strcpy(dirent[i].name, name[i]);
-    }
-    for (int i = 0; i < d_blks; ++i) {
-        int pos;
-        for (int k = 0; k < d_per_blk; ++k) {
-            memcpy(&((struct dirent *)blk)[pos], &dirent[pos], sizeof(struct dirent));
-            if((pos = (i*d_blks)+k) == 2) {
-                for(k += 1; k < d_per_blk; ++k) {
+    dirent[0] = (struct dirent) {
+        .ino = 0,
+        .valid = 1,
+        .name = "/"
+    };
+    dirent[1] = (struct dirent) {
+            .ino = 1,
+            .valid = 1,
+            .name = "."
+    };
+    dirent[2] = (struct dirent) {
+            .ino = 2,
+            .valid = 1,
+            .name = ".."
+    };
+    for(int i = 0; i < d_blks; ++i) {
+        for(int k = 0; k < d_per_blk; ++k) {
+            int pos = (i*d_blks) + k;
+            if(pos >= 2) {
+                while(k < d_per_blk) {
                     ((struct dirent *)blk)[pos].valid = 0;
-                    break;
+                    k++;
                 }
+                break;
             }
+            memcpy(&((struct dirent *)blk)[pos], &dirent[pos], sizeof(struct dirent));
         }
-        if(bio_write((superblock.d_start_blk + i), blk) == -1 && errno) {
+        if((bio_write((superblock.d_start_blk+1), blk) < 0) && errno) {
             ERROR("Failed to write to disk");
+            free(blk);
             return -1;
         }
     }
@@ -257,8 +267,9 @@ int tfs_mkfs() {
     }
 
     memcpy(blk, &i_root, sizeof(struct inode));
-    if(bio_write(superblock.i_start_blk, blk) == -1 && errno) {
+    if((bio_write(superblock.i_start_blk, blk) < 0) && errno) {
         ERROR("Failed to write to disk");
+        free(blk);
         return -1;
     }
 
@@ -273,21 +284,22 @@ int tfs_mkfs() {
 static void *tfs_init(struct fuse_conn_info *conn) {
 
     // Step 1a: If disk file is not found, call mkfs
-    struct stat info;
-    if (stat(diskfile_path, &info)) {
+    if (dev_open(diskfile_path)) {
         if(tfs_mkfs()) {
-            return NULL;
+            exit(EXIT_FAILURE);
         }
+        return NULL;
     }
 
     // Step 1b: If disk file is found, just initialize in-memory data structures
     // and read superblock from disk
-    if((bio_read(0, &superblock))) {
+    if((bio_read(0, &superblock)) < 0) {
         ERROR("Failed to read disk");
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     if(superblock.magic_num != MAGIC_NUM) {
         ERROR( "disk's filesystem is not recognized");
+        exit(EXIT_FAILURE);
     }
 
     return NULL;
