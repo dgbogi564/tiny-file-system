@@ -9,7 +9,7 @@
 #include <dirent.h>
 
 /* You need to change this macro to your TFS mount point*/
-#define TESTDIR "/tmp/dog12/mountdir"
+#define TESTDIR "/tmp/6098EC24/mountdir"
 
 #define N_FILES 100
 #define BLOCKSIZE 4096

@@ -17,7 +17,7 @@ mkdir -p "$1"
 cd src || exit
 make clean
 make
-./tfs -s "$1"
+./tfs -d -s "$1"
 
 # check if tiny file system was mounted successfully
 findmnt "$1"

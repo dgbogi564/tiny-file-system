@@ -19,9 +19,6 @@
 
 #include "block.h"
 
-//Disk size set to 32MB
-#define DISK_SIZE	32*1024*1024
-
 int diskfile = -1;
 
 //Creates a file which is your new emulated disk

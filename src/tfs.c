@@ -27,6 +27,7 @@
 #include "tfs.h"
 
 char diskfile_path[PATH_MAX];
+static double dirent_blocksize_ratio = (double)BLOCK_SIZE/(double)sizeof(struct dirent);
 
 // Declare your in-memory data structures here
 
@@ -35,13 +36,31 @@ char diskfile_path[PATH_MAX];
  */
 int get_avail_ino() {
 
+    int avail_ino = -1;
+
+    struct superblock *superblock = malloc(BLOCK_SIZE);
+    bio_read(0, superblock);
+
     // Step 1: Read inode bitmap from disk
+    bitmap_t i_bitmap = malloc(BLOCK_SIZE);
+    bio_read(superblock->i_bitmap_blk, i_bitmap);
 
     // Step 2: Traverse inode bitmap to find an available slot
+    for (int i = 0; i < MAX_INUM; ++i) {
+        if(!i_bitmap[i]) {
+            avail_ino = i;
+            break;
+        }
+    }
 
     // Step 3: Update inode bitmap and write to disk
+    set_bitmap(i_bitmap, avail_ino);
+    bio_write(superblock->i_bitmap_blk, i_bitmap);
 
-    return 0;
+    free(superblock);
+    free(i_bitmap);
+
+    return avail_ino;
 }
 
 /* 
@@ -49,24 +68,33 @@ int get_avail_ino() {
  */
 int get_avail_blkno() {
 
+    int avail_blkno = -1;
+
+    struct superblock *superblock = malloc(BLOCK_SIZE);
+    bio_read(0, superblock);
+
     // Step 1: Read data block bitmap from disk
-    bitmap_t bitmap = malloc(BLOCK_SIZE);
-    bio_read(2, bitmap);
+    bitmap_t d_bitmap = malloc(BLOCK_SIZE);
+    bio_read(superblock->d_start_blk, d_bitmap);
 
     // Step 2: Traverse data block bitmap to find an available slot
-    // Step 3: Update data block bitmap and write to disk
-    for(int i = 0; i < MAX_DNUM; i++) {
-        if(!get_bitmap(bitmap, i)) {
-            set_bitmap(bitmap, i);
-            return i;
+    for (int i = 0; i < MAX_DNUM; ++i) {
+        if(!d_bitmap[i]) {
+            avail_blkno = i;
+            break;
         }
-
     }
 
-    return -1;
+    // Step 3: Update data block bitmap and write to disk
+    set_bitmap(d_bitmap, avail_blkno);
+    bio_write(superblock->d_bitmap_blk, d_bitmap);
+
+    free(superblock);
+    free(d_bitmap);
+
+    return avail_blkno;
 }
 
-/* 
 /*
  * inode operations
  */
@@ -156,52 +184,83 @@ int tfs_mkfs() {
     dev_init(diskfile_path);
 
     // write superblock information
+    static const struct superblock sb_info = {
+            .magic_num = MAGIC_NUM,
+            .max_inum = MAX_INUM,
+            .max_dnum = MAX_DNUM,
+            .i_bitmap_blk = 1,
+            .d_bitmap_blk = 2,
+            .i_start_blk = 3,
+            .d_start_blk = (2 + ((MAX_INUM*1024)/BLOCK_SIZE)) + 1
+    };
     struct superblock *superblock = malloc(BLOCK_SIZE);
-    superblock->magic_num    = MAGIC_NUM;
-    superblock->max_inum     = MAX_INUM;
-    superblock->max_dnum     = MAX_DNUM;
-    superblock->i_bitmap_blk = 1;
-    superblock->d_bitmap_blk = 2;
-    superblock->i_start_blk  = 3;
-    superblock->d_start_blk  = (2 + ((MAX_INUM*1024)/BLOCK_SIZE)) + 1;
+    memcpy(superblock, &sb_info, sizeof(struct superblock));
     bio_write(0, superblock);
 
-
-    // update bitmap information for root directory
-    bitmap_t bitmap = calloc(1, BLOCK_SIZE);
-    set_bitmap(bitmap, 0);
-
     // initialize inode bitmap
-    bio_write(superblock->i_bitmap_blk, bitmap);
+    bitmap_t i_bitmap = calloc(1, BLOCK_SIZE);
 
     // initialize data block bitmap
-    bio_write(superblock->d_bitmap_blk, bitmap);
+    bitmap_t d_bitmap = calloc(1, BLOCK_SIZE);
+
+    // update bitmap information for root directory
+    const int dirents_per_block = (int)dirent_blocksize_ratio;
+    int dirent_blocks = (int)(3.0/dirents_per_block);
+    if((3.0/dirents_per_block) != dirent_blocks) {
+        dirent_blocks += 1;
+
+    static struct dirent dir_info[3];
+
+    dir_info[0].ino = 0;
+    dir_info[0].valid = 1;
+    strcpy(dir_info[0].name, "/");
+
+    dir_info[1].ino = 1;
+    dir_info[1].valid = 1;
+    strcpy(dir_info[1].name, ".");
+
+    dir_info[2].ino = 2;
+    dir_info[2].valid = 1;
+    strcpy(dir_info[2].name, "..");
+
+    int dir_counter = 0;
+    for(int i = 0; i < dirent_blocks; ++i) {
+        struct dirent *dirent = calloc(1, BLOCK_SIZE);
+        for(int k = 0; k < dirents_per_block; ++k) {
+            memcpy(&dirent[k], &dir_info[dir_counter], sizeof(struct dirent));
+            dir_counter++;
+        }
+        bio_write((superblock->d_start_blk + i), dirent);
+        free(dirent);
+    }
 
     // update inode for root directory
+    struct inode root_inode_info = {
+            .ino = 0,
+            .valid = 1,
+            .size = BLOCK_SIZE*(dirent_blocks-1),
+            .type = directory,
+            .link = 0,
+    };
+    for (int i = 0; i < 8; ++i) {
+        root_inode_info.direct_ptr[i] = -1;
+        root_inode_info.direct_ptr[16-i] = -1;
+        root_inode_info.indirect_ptr[i] = -1;
+    }
+    for(int i = 0; i < dirent_blocks; ++i) {
+        root_inode_info.direct_ptr[i] = i;
+        root_inode_info.link++;
+    }
 
-    struct inode *inode = malloc(BLOCK_SIZE);
-    inode->ino = 0;
-    inode->valid = 1;
-    inode->size = BLOCK_SIZE;
-    inode->type = 0;
-    inode->link = 1;
-    inode->direct_ptr[0] = superblock->d_start_blk;
-    memset(inode->direct_ptr+sizeof(int), 0, sizeof(int)*15);
-    memset(inode->indirect_ptr, 0, sizeof(int)*8);
-    bio_write(superblock->i_start_blk, inode);
-
-    struct dirent *dirent = malloc(BLOCK_SIZE);
-    dirent->valid = 1;
-    dirent->ino = 0;
-    dirent->name[0] = '/';
-    dirent->name[1] = '\0';
-    bio_write(superblock->d_start_blk, inode);
-
+    struct inode *root_inode = malloc(BLOCK_SIZE);
+    memcpy(root_inode, &root_inode_info, sizeof(struct inode));
+    set_bitmap(i_bitmap, 0);
+    bio_write(superblock->i_start_blk, root_inode);
 
     free(superblock);
-    free(bitmap);
-    free(inode);
-    free(dirent);
+    free(i_bitmap);
+    free(d_bitmap);
+    free(root_inode);
 
     return 0;
 }
