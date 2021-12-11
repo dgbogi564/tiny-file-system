@@ -162,6 +162,7 @@ int writei(uint16_t ino, struct inode *inode) {
  * directory operations
  */
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
+
     int DISK_ERROR = 0;
     int at_base = 0;
     int found = 0;
@@ -289,6 +290,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 }
 
 int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t name_len) {
+
     int DISK_ERROR = 0;
     int duplicate = 0;
     int stop = 0;
@@ -405,97 +407,94 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
         } else break;
     }
 
+
     // Step 3: Add directory entry in dir_inode's data block and write to disk
     // Allocate a new data block for this directory if it does not exist
     // Update directory inode
     // Write directory entry
-    if (duplicate == 0) {
+    /* Use single iteration loop for quickly exiting function to avoid
+     * duplicate lines frees/returns and to avoid unwieldy if statement
+     * logic for disk error handling.                                   */
+    while (duplicate == 0) {
+
+        int dirent_indx = first_invalid_dirent_slot;
+        int ptr_indx = last_valid_indirect_blk;
+
         /* Get new available inode number. */
         int new_ino = get_avail_ino();
         if(new_ino < 0) {
             TRACEBACK;
             DISK_ERROR = 1;
-        } else {
-
-            /* Create directory entry. */
-            dirent.ino = new_ino;
-            dirent.valid = 0;
-            strcpy(dirent.name, f_basename);
-
-            /* If there exists an invalid directory entry in already allocated blocks */
-            if (first_invalid_dirent_slot > 0) {
-
-                /* If last_valid_indirect_blk < 0, then an invalid slot was found in
-                 * the direct array; copy the direct array to ptr_blk. */
-                if (last_valid_indirect_blk < 0) memcpy(ptr_blk, inode.direct_ptr, sizeof(inode.direct_ptr));
-
-                /* Otherwise, get the direct array the last valid indirect_blk
-                 * points to and copy it to ptr_blk.                            */
-                else if (bio_read(inode.indirect_ptr[last_valid_indirect_blk], ptr_blk) < 0) {
-                    ERROR("Failed to read disk");
-                    DISK_ERROR = 1;
-                }
-
-                /* Get the dirent block */
-                if(bio_read(ptr_blk[last_valid_direct_blk], dirent_blk) >= 0) {
-
-                    /* Copy new dirent into dirent block */
-                    memcpy(&dirent_blk[first_invalid_dirent_slot], &dirent, sizeof(struct dirent));
-
-                    /* Write dirent block to disk */
-                    if(bio_write(ptr_blk[last_valid_indirect_blk], dirent_blk) < 0) {
-                        ERROR("Failed to write to disk");
-                        DISK_ERROR = 1;
-                    }
-                } else {
-                    ERROR("Failed to read disk");
-                    DISK_ERROR = 1;
-                }
-            } else {
-                /* Create new data block */
-                int new_dirent_blkno = get_avail_blkno();
-
-                /* If there exists a direct pointer block that hasn't been set,
-                 * set the direct pointer to the new dirent block.               */
-                if (first_invalid_direct_blk > 0) inode.direct_ptr[first_invalid_direct_blk] = new_dirent_blkno;
-
-                /* If there exists indirect blocks that haven't been set */
-                else if(first_invalid_indirect_blk >= 0) {
-
-                    /* Get a new block and link it to the indirect pointer array */
-                    int new_direct_blkno = get_avail_blkno();
-                    inode.indirect_ptr[first_invalid_indirect_blk] = new_direct_blkno;
-
-                    /* Create direct array block */
-                    ptr_blk[0] = new_dirent_blkno;
-                    for(int i = 1; i < 16; ++i) {
-                        ptr_blk[i] = -1;
-                    }
-
-                    /* Write direct array block to disk */
-                    if(bio_write(new_direct_blkno, ptr_blk) >= 0) {
-
-                        /* Create dirent block */
-                        memcpy(&dirent_blk[0], &dirent, sizeof(struct dirent));
-                        for (int i = 1; i < dirents_per_blk; ++i) {
-                            dirent_blk[i].valid = 0;
-                        }
-
-                        /* Write dirent block to disk */
-                        if(bio_write(new_dirent_blkno, dirent_blk)) {
-                            ERROR("Failed to write to disk");
-                            DISK_ERROR = 1;
-                        }
-                    } else {
-                        ERROR("Failed to write to disk");
-                        DISK_ERROR = 1;
-                    }
-                } else {
-                    ERROR("Max amount of directory entries reached.");
-                    DISK_ERROR = 1;
-                }
-            }
+            break;
         }
+
+        /* Create directory entry. */
+        dirent.ino = new_ino;
+        dirent.valid = 0;
+        strcpy(dirent.name, f_basename);
+
+        /* If there doesn't exist an invalid directory entry in already allocated blocks.
+         * Else, read the dirent block into memory.  */
+        if (first_invalid_dirent_slot < 0) {
+
+            /* Get free data block address and initialize it. */
+            int new_dirent_blkno = get_avail_blkno();
+            for(int i = 0; i < dirents_per_blk; ++i) {
+                dirent_blk[i].valid = 0;
+            }
+
+            /* If there exists an unset direct pointer block.
+             * Else if there exists indirect blocks that haven't been set. */
+            if (first_invalid_direct_blk > 0) {
+                /* Set the direct pointer to the new dirent block. */
+                inode.direct_ptr[first_invalid_direct_blk] =  new_dirent_blkno;
+            } else if (first_invalid_indirect_blk >= 0) {
+                /* Get a free data block's address and link to indirect pointer array. */
+                int new_direct_blkno = get_avail_blkno();
+                inode.indirect_ptr[first_invalid_indirect_blk] = new_direct_blkno;
+
+                /* Initialize direct array block. */
+                ptr_blk[0] = new_dirent_blkno;
+                for (int i = 1; i < 16; ++i) {
+                    ptr_blk[i] = -1;
+                }
+
+                /* Write direct array block to the now, not free, data block's address. */
+                if(bio_write(new_direct_blkno, ptr_blk) < 0) {
+                    ERROR("Failed to write to disk");
+                    DISK_ERROR = -1;
+                    break;
+                }
+
+                /* Set pointer and dirent indexes for write operation. */
+                dirent_indx = 0;
+                ptr_indx = 0;
+            } else {
+                ERROR("Max amount of directory entries reached.");
+                DISK_ERROR = -1;
+                break;
+            }
+        } else if (bio_read(last_valid_direct_blk, dirent_blk) < 0) {
+            ERROR("Failed to read disk");
+            DISK_ERROR = -1;
+            break;
+        }
+
+        /* Copy new dirent into dirent block */
+        memcpy(&dirent_blk[dirent_indx], &dirent, sizeof(struct dirent));
+
+        /* Write dirent block to disk */
+        if(bio_write(ptr_blk[ptr_indx], dirent_blk) < 0) {
+            ERROR("Failed to write to disk");
+            DISK_ERROR = 1;
+            break;
+        }
+
+        /* Update links in inode */
+        inode.link++;
+
+        /* Exit loop normally */
+        duplicate = 1;
     }
 
     free(fname_CPY1);
@@ -514,7 +513,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
     // TODO Want to keep valid and invalid blocks in pointer arrays separated into left and right sections.
-    // TODO We don't separate invalid and valid dirents into sections.
+    // TODO Separate invalid and valid dirents into sections.
     // Step 1: Read dir_inode's data block and checks each directory entry of dir_inode
 
     // Step 2: Check if fname exist
