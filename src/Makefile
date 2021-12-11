@@ -4,11 +4,11 @@ LDFLAGS=-lfuse
 
 OBJ=tfs.o block.o
 
-%.o: %.c
-	$(CC) -c $(CFLAGS) $< -o $@
-
 tfs: $(OBJ)
 	$(CC) $(OBJ) $(LDFLAGS) -o tfs
+
+%.o: %.c
+	$(CC) -c $(CFLAGS) $< -o $@
 
 .PHONY: clean
 clean:

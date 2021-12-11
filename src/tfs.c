@@ -43,14 +43,14 @@ int get_avail_ino() {
     int avail_ino = -1;
 
     // Step 1: Read inode bitmap from disk
-    if (bio_read(superblock.i_bitmap_blk, i_bitmap) < 0) {
+    if(bio_read(superblock.i_bitmap_blk, i_bitmap) < 0) {
         ERROR("Failed to read disk");
         return -1;
     }
 
     // Step 2: Traverse inode bitmap to find an available slot
-    for (int i = 0; i < MAX_INUM; ++i) {
-        if (get_bitmap(i_bitmap, i) == 0) {
+    for(int i = 0; i < MAX_INUM; ++i) {
+        if(get_bitmap(i_bitmap, i) == 0) {
             avail_ino = i;
             break;
         }
@@ -58,7 +58,7 @@ int get_avail_ino() {
 
     // Step 3: Update inode bitmap and write to disk
     set_bitmap(i_bitmap, avail_ino);
-    if (bio_write(superblock.i_bitmap_blk, i_bitmap) < 0) {
+    if(bio_write(superblock.i_bitmap_blk, i_bitmap) < 0) {
         ERROR("Failed to write to disk");
         return -1;
     }
@@ -75,14 +75,14 @@ int get_avail_blkno() {
 
     // Step 1: Read data block bitmap from disk
     errno = 0;
-    if (bio_read(superblock.d_bitmap_blk, d_bitmap) < 0) {
+    if(bio_read(superblock.d_bitmap_blk, d_bitmap) < 0) {
         ERROR("Failed to read disk");
         return -1;
     }
 
     // Step 2: Traverse data block bitmap to find an available slot
-    for (int i = 0; i < MAX_DNUM; ++i) {
-        if (get_bitmap(d_bitmap, i) == 0) {
+    for(int i = 0; i < MAX_DNUM; ++i) {
+        if(get_bitmap(d_bitmap, i) == 0) {
             avail_blkno = i;
             d_bitmap[i] = 1;
             break;
@@ -91,7 +91,7 @@ int get_avail_blkno() {
 
     // Step 3: Update data block bitmap and write to disk
     set_bitmap(d_bitmap, avail_blkno);
-    if (bio_write(superblock.i_bitmap_blk, d_bitmap) < 0) {
+    if(bio_write(superblock.i_bitmap_blk, d_bitmap) < 0) {
         ERROR("Failed to write to disk");
         return -1;
     }
@@ -105,7 +105,7 @@ int get_avail_blkno() {
 int readi(uint16_t ino, struct inode *inode) {
 
     struct inode *i_blk = malloc(BLOCK_SIZE);
-    if (i_blk == NULL) {
+    if(i_blk == NULL) {
         ERROR("Failed to allocate memory");
         return -1;
     }
@@ -116,7 +116,7 @@ int readi(uint16_t ino, struct inode *inode) {
     int i_blkno = superblock.i_start_blk + ((ino/i_per_blk) + (i_offset != 0));
 
     // Step 3: Read the block from disk and then copy into inode structure
-    if (bio_read(i_blkno, i_blk) < 0) {
+    if(bio_read(i_blkno, i_blk) < 0) {
         free(i_blk);
         ERROR("Failed to read disk");
         return -1;
@@ -130,7 +130,7 @@ int readi(uint16_t ino, struct inode *inode) {
 int writei(uint16_t ino, struct inode *inode) {
 
     struct inode *i_blk = malloc(BLOCK_SIZE);
-    if (i_blk == NULL) {
+    if(i_blk == NULL) {
         ERROR("Failed to allocate memory");
         return -1;
     }
@@ -141,13 +141,13 @@ int writei(uint16_t ino, struct inode *inode) {
     int i_blkno = superblock.i_start_blk + ((ino/i_per_blk) + (i_offset != 0));
 
     // Step 3: Write inode to disk
-    if (bio_read(i_blkno, i_blk) < 0) {
+    if(bio_read(i_blkno, i_blk) < 0) {
         free(i_blk);
         ERROR("Failed to read disk");
         return -1;
     }
     memcpy(&i_blk[i_offset], inode, sizeof(struct inode));
-    if (bio_write(i_blkno, i_blk) < 0) {
+    if(bio_write(i_blkno, i_blk) < 0) {
         ERROR("Failed to write to disk");
         free(i_blk);
         return -1;
@@ -172,25 +172,22 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
     char *fname_CPY1 = strdup(fname);
     char *fname_CPY2 = strdup(fname);
     struct inode inode = {0};
-    struct inode *i_blk = malloc(BLOCK_SIZE);
     struct dirent *dirent_blk = malloc(BLOCK_SIZE);
     int *ptr_blk = malloc(BLOCK_SIZE);
 
     // Step 1: Call readi() to get the inode using ino (inode number of current directory)
-    if (   fname_CPY1   == NULL
-        || fname_CPY2   == NULL
-        || dirent_blk   == NULL
-        || ptr_blk      == NULL
-        || i_blk        == NULL
-        || readi(ino, i_blk) < 0
-       ) {
+    if(fname_CPY1   == NULL
+    || fname_CPY2   == NULL
+    || dirent_blk   == NULL
+    || ptr_blk      == NULL
+    || readi(ino, &inode) < 0
+    ) {
         if(fname_CPY1   != NULL) free(fname_CPY1);
         if(fname_CPY2   != NULL) free(fname_CPY2);
-        if(i_blk        != NULL) free(i_blk);
         if(dirent_blk   != NULL) free(dirent_blk);
         if(ptr_blk      != NULL) free(ptr_blk);
+        ERROR("Failed to allocate memory.");
     }
-    memcpy(&inode, i_blk, sizeof(struct inode));
     char *path = strtok(fname_CPY1, delim);
     char *f_basename = basename(fname_CPY2);
 
@@ -198,18 +195,18 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
     // Step 3: Read directory's data block and check each directory entry.
     // If the name matches, then copy directory entry to dirent structure
     memcpy(ptr_blk, inode.direct_ptr, sizeof(inode.direct_ptr));
-    for (; path != NULL; path = strtok(NULL, delim)) {
+    for(; path != NULL; path = strtok(NULL, delim)) {
         int goto_next_subdir = 0;
-        for (int i = -1; i < 8; ) {
-            for (int j = 0; j < 16; ++j) {
+        for(int i = -1; i < 8; ) {
+            for(int j = 0; j < 16; ++j) {
                 /* If we reached unused section of direct array. */
-                if (ptr_blk[j] < 0) {
+                if(ptr_blk[j] < 0) {
                     stop = 1;
                     break;
                 }
 
                 /* Read block pointed to at the direct array index, j. */
-                if (bio_read(ptr_blk[j], dirent_blk) < 0) {
+                if(bio_read((superblock.d_start_blk + ptr_blk[j]), dirent_blk) < 0) {
                     ERROR("Failed to read disk");
                     stop = 1;
                     DISK_ERROR = 1;
@@ -217,18 +214,18 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
                 }
 
                 /* Search block for the directory/subdirectory. */
-                for (int k = 0; k < dirents_per_blk; ++k) {
+                for(int k = 0; k < dirents_per_blk; ++k) {
                     /* Break if we reach an invalid directory entries.
                      * We separate invalid and valid directory entries. */
-                    if (dirent_blk[k].valid == 0) {
+                    if(dirent_blk[k].valid == 0) {
                         break;
                     }
 
                     /* If dirent matches the directory we're looking for. */
-                    if (strcmp(path, dirent_blk[k].name) == 0) {
+                    if(strcmp(path, dirent_blk[k].name) == 0) {
                         /* If we're at the base directory,
                          * copy the directory entry and break out of all loops. */
-                        if ((at_base = (strcmp(path, f_basename) == 0))) {
+                        if((at_base = (strcmp(path, f_basename) == 0))) {
                             found = 1;
                             stop = 1;
                             memcpy(dirent, &dirent_blk[k], sizeof(struct dirent));
@@ -236,12 +233,11 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
                         }
 
                         /* Otherwise, setup inode and ptr_blk go and search next subdirectory. */
-                        if (readi(dirent_blk[k].ino, i_blk) < 0) {
+                        if(readi(dirent_blk[k].ino, &inode) < 0) {
                             stop = 1;
                             DISK_ERROR = 1;
                             break;
                         }
-                        memcpy(&inode, i_blk, sizeof(struct inode));
                         memcpy(ptr_blk, inode.direct_ptr, sizeof(inode.direct_ptr));
                         goto_next_subdir = 1;
                         break;
@@ -250,12 +246,12 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
                 /* If we reached unused section of array or if we
                  * found next subdir, break out of direct array loop. */
-                if (stop || goto_next_subdir) break;
+                if(stop || goto_next_subdir) break;
             }
 
             /* If we reached unused section of array or if we
              * found next subdir, break out of indirect array loop. */
-            if (stop || goto_next_subdir) break;
+            if(stop || goto_next_subdir) break;
 
             /* If we haven't searched all valid indirect pointer entries,
              * get next indirect pointer and set ptr_blk for next iteration.
@@ -266,24 +262,31 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
                     stop = 1;
                     break;
                 }
-                if (bio_read(inode.indirect_ptr[i], ptr_blk) < 0) {
+                if(bio_read( (superblock.d_start_blk + inode.indirect_ptr[i]), ptr_blk) < 0) {
                     ERROR("Failed to read disk");
                     stop = 1;
                     DISK_ERROR = 1;
                 }
             } else break;
         }
-        if (stop) break;
+        if(stop) {
+            break;
+        }
     }
 
     free(fname_CPY1);
     free(fname_CPY2);
-    free(i_blk);
     free(dirent_blk);
     free(ptr_blk);
-    if (DISK_ERROR == 0) return -1;
-    if (found == 0) {
-        if(at_base) ERROR("Invalid path: %s doesn't exist", path);
+    if(DISK_ERROR) {
+        return -1;
+    }
+    if(found == 0) {
+        /*
+        if(at_base) {
+            ERROR("Invalid path: %s doesn't exist", path);
+        }
+         */
         return -1;
     }
     return 0;
@@ -295,40 +298,215 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     int duplicate = 0;
     int stop = 0;
 
-    int first_invalid_direct_blk = -1;
-    int last_valid_direct_blk = -1;
-    int last_valid_indirect_blk = -2;
-    int first_invalid_indirect_blk = -1;
-    int first_invalid_dirent_slot = -1;
-
-    char delim [2] = "/";
     char *fname_CPY1 = strdup(fname);
     char *fname_CPY2 = strdup(fname);
-    char *fname_CPY3 = strdup(fname);
     struct inode inode = {0};
     struct dirent dirent = {0};
     struct dirent *dirent_blk = malloc(BLOCK_SIZE);
     int *ptr_blk = malloc(BLOCK_SIZE);
 
+    if(fname_CPY1   == NULL
+    || fname_CPY2   == NULL
+    || dirent_blk   == NULL
+    || ptr_blk      == NULL
+    ) {
+        if(fname_CPY1   != NULL) free(fname_CPY1);
+        if(fname_CPY2   != NULL) free(fname_CPY2);
+        if(dirent_blk   != NULL) free(dirent_blk);
+        if(ptr_blk      != NULL) free(ptr_blk);
+        ERROR("Failed to allocate memory.");
+    }
+    char *f_basename = basename(fname_CPY1);
+    char *f_dirname = dirname(fname_CPY2);
+
+    /* Get immediate subdirectory's inode. */
+    if(dir_find(dir_inode.ino, f_dirname, strlen(f_dirname), &dirent) < 0) {
+        TRACEBACK;
+        free(fname_CPY1);
+        free(fname_CPY2);
+        free(dirent_blk);
+        free(ptr_blk);
+        return -1;
+    }
+    readi(dirent.ino, &inode);
+
     // Step 1: Read dir_inode's data block and check each directory entry of dir_inode
-    if (   fname_CPY1   == NULL
+    // Step 2: Check if fname (directory name) is already used in other entries
+    if(dir_find(inode.ino, f_basename, strlen(f_basename), &dirent) >= 0) {
+        duplicate = 1;
+    }
+
+    // Step 3: Add directory entry in dir_inode's data block and write to disk
+    // Allocate a new data block for this directory if it does not exist
+    // Update directory inode
+    // Write directory entry
+    if(duplicate == 0) {
+
+        // TODO should we make new inode?
+
+        /* Create new inode and write to disk. */
+        struct inode new_inode = {
+                .ino = f_ino,
+                .valid = 1,
+                .size = 0,
+                .type = directory,
+                .link = 0
+        };
+        for(int i = 0; i < 8; ++i) {
+            new_inode.indirect_ptr[i] = -1;
+            new_inode.direct_ptr[i] = -1;
+            new_inode.direct_ptr[15-i] = -1;
+        }
+        writei((superblock.i_start_blk + new_inode.ino), &new_inode);
+
+        /* Create new directory entry. */
+        dirent.ino = new_inode.ino;
+        dirent.valid = 1;
+        strcpy(dirent.name, f_basename);
+
+        for(int i = 0; i < 8; ) {
+            for(int j = 0; j < 16; ++j) {
+
+                /* If unused section of direct array has been reached. */
+                if(ptr_blk[j] < 0) {
+
+                    /* Create new dirent block and write to disk. */
+                    int new_blkno = get_avail_blkno();
+                    memcpy(&dirent_blk[0], &new_inode, sizeof(struct dirent));
+                    for(int k = 0; k < dirents_per_blk; ++k) {
+                        dirent_blk[0].valid = 0;
+                    }
+                    bio_write(superblock.d_start_blk + f_ino, dirent_blk);
+
+                    /* Link to direct array. */
+                    ptr_blk[j] = new_blkno;
+
+                    stop = 1;
+                    break;
+                }
+
+                /* Read dirent block. */
+                if(bio_read((superblock.d_start_blk + ptr_blk[j]), dirent_blk) < 0) {
+                    ERROR("Failed to read disk");
+                    DISK_ERROR = 1;
+                    stop = 1;
+                    break;
+                }
+
+                /* Search block for space. */
+                for(int k = 0; k < dirents_per_blk; ++k) {
+
+                    /* If space is found. */
+                    if(dirent_blk[k].valid == 0) {
+
+                        /* Place new entry into dirent block. */
+                        memcpy(&dirent_blk[k], &dirent, sizeof(struct dirent));
+
+                        /* Write dirent block to disk. */
+                        bio_write((superblock.d_start_blk + ptr_blk[j]), dirent_blk);
+
+                        stop = 1;
+                        break;
+                    }
+                }
+            }
+
+            if(stop) {
+                break;
+            }
+
+            /* If all indirect pointer entries have been checked. */
+            if((++i) > 7) {
+                ERROR("Max amount of directory entries reached.");
+                break;
+            }
+
+            /* If we've reached invalid section of the indirect pointer array. */
+            if(inode.indirect_ptr[i] == -1) {
+                /* Create and initialize new direct pointer array data block. */
+                int new_blkno = get_avail_blkno();
+                bio_read((superblock.d_start_blk + new_blkno), ptr_blk);
+                for(int j = 0; j < 16; ++j) {
+                    ptr_blk[j] = -1;
+                }
+                /* Write new direct pointer array block. */
+                bio_write((superblock.d_start_blk + new_blkno), ptr_blk);
+
+
+                /* Set indirect pointer entry to the new block's number. */
+                inode.indirect_ptr[i] = new_blkno;
+                break;
+            }
+
+            /* Get data block of the indirect pointer entry. */
+            if(bio_read((superblock.d_start_blk + inode.indirect_ptr[i]), ptr_blk) < 0) {
+                ERROR("Failed to read disk");
+                stop = 1;
+                DISK_ERROR = 1;
+                break;
+            }
+        }
+    }
+
+    free(fname_CPY1);
+    free(fname_CPY2);
+    free(dirent_blk);
+    free(ptr_blk);
+    if(DISK_ERROR) {
+        return -1;
+    }
+    if(duplicate) {
+        ERROR("Directory of the same name already exists");
+        return -1;
+    }
+    return 0;
+}
+
+int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
+
+    // TODO Want to keep valid and invalid blocks in pointer arrays separated into sections.
+    // TODO Separate invalid and valid dirents into sections.
+    // TODO Need to remove extra data blocks if no more dirents are used in that block
+    // TODO have to handle ".", "..", <dirname> entries
+    int DISK_ERROR = 0;
+    int has_files = 0;
+    int found = 0;
+    int stop = 0;
+
+    char *fname_CPY1 = strdup(fname);
+    char *fname_CPY2 = strdup(fname);
+    struct inode inode = {0};
+    struct dirent dirent = {0};
+    struct dirent *dirent_blk = malloc(BLOCK_SIZE);
+    int *ptr_blk = malloc(BLOCK_SIZE);
+
+    if(   fname_CPY1   == NULL
         || fname_CPY2   == NULL
-        || fname_CPY3   == NULL
         || dirent_blk   == NULL
         || ptr_blk      == NULL
        ) {
         if(fname_CPY1   != NULL) free(fname_CPY1);
         if(fname_CPY2   != NULL) free(fname_CPY2);
-        if(fname_CPY3   != NULL) free(fname_CPY3);
         if(dirent_blk   != NULL) free(dirent_blk);
         if(ptr_blk      != NULL) free(ptr_blk);
+        ERROR("Failed to allocate memory.");
     }
-    char *path = strtok(fname_CPY1, delim);
-    char *f_basename = basename(fname_CPY2);
-    char *f_dirname = dirname(fname_CPY3);
+    char *f_basename = basename(fname_CPY1);
+    char *f_dirname = dirname(fname_CPY2);
+    char *fname_CPY3 = strdup(f_basename);
+    if(fname_CPY3 == NULL) {
+        free(fname_CPY1);
+        free(fname_CPY2);
+        free(dirent_blk);
+        free(ptr_blk);
+    }
+    char *f_subdir_basename = basename(fname_CPY3);
 
-    /* Get immediate subdirectory's inode */
-    if (dir_find(dir_inode.ino, f_dirname, strlen(f_dirname), &dirent) < 0) {
+
+    // Step 1: Read dir_inode's data block and checks each directory entry of dir_inode
+
+    /* Get immediate subdirectory of directory we want to remove. */
+    if(dir_find(dir_inode.ino, f_dirname, name_len, &dirent) < 0) {
         TRACEBACK;
         free(fname_CPY1);
         free(fname_CPY2);
@@ -339,52 +517,180 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     }
     readi(dirent.ino, &inode);
 
-    // Step 2: Check if fname (directory name) is already used in other entries
+
+    // Step 2: Check if fname exist
+    // Step 3: If exist, then remove it from dir_inode's data block and write to disk
+
+    /* Copy the immediate subdirectory's direct pointer to ptr_blk. */
     memcpy(ptr_blk, inode.direct_ptr, sizeof(inode.direct_ptr));
-    for (int i = -1; i < 8; ) {
-        for (int j = 0; j < 16; ++j) {
+
+    /* Begin searching all valid direct pointers and indirect pointers for directory. */
+    for(int i = -1; i < 8; ) {
+        for(int j = 0; j < 16; ++j) {
             /* If we reached unused section of direct array. */
-            if (ptr_blk[j] < 0) {
-                if(first_invalid_direct_blk < 0) {
-                    last_valid_indirect_blk = i;
-                    first_invalid_direct_blk = j;
-                }
+            if(ptr_blk[j] < 0) {
                 stop = 1;
                 break;
             }
 
-            /* Read block pointed to at the direct array index, j.*/
-            if (bio_read(ptr_blk[j], dirent_blk) < 0) {
+            /* Read block pointed to at the direct array index, j. */
+            if(bio_read((superblock.d_start_blk + ptr_blk[j]), dirent_blk) < 0) {
                 ERROR("Failed to read disk");
-                stop = 1;
                 DISK_ERROR = 1;
+                stop = 1;
                 break;
             }
 
-            /* Search all blocks for the directory/subdirectory. */
-            for (int k = 0; k < dirents_per_blk; ++k) {
-                /* Break if we reach an invalid directory entries.
-                 * We separate invalid and valid directory entries. */
-                if (dirent_blk[k].valid == 0) {
-                    if(first_invalid_dirent_slot < 0) {
-                        last_valid_indirect_blk = i;
-                        last_valid_direct_blk = j;
-                        first_invalid_dirent_slot = k;
+            /* Search the block for the directory we want to remove. */
+            for(int k = 0; k < dirents_per_blk; ++k) {
+
+                /* Skip block if we reached invalid section of the directory entries. */
+                if(dirent_blk[k].valid == 0) {
+                    break;
+                }
+
+                /* If we find the directory we want to remove. */
+                if(strcmp(f_basename, dirent_blk[k].name) == 0) {
+                    found = 1;
+
+                    /* Read the inode of the directory to be removed. */
+                    struct inode to_be_removed_inode = {0};
+                    if(readi(dirent_blk[k].ino, &to_be_removed_inode) < 0) {
+                        DISK_ERROR = -1;
+                        ERROR("Failed to read disk");
+                        stop = 1;
                         break;
                     }
+
+                    /* Check if directory to be removed is empty . */
+                    if(to_be_removed_inode.link > 3) {
+                        has_files = 1;
+                        stop = 1;
+                        break;
+                    }
+
+                    /* Check if the dirent block will still be in use after removal. */
+                    int all_dirents_invalid = 1;
+                    for(int l = 0; l < k; ++l) {
+                        if(dirent_blk[l].valid && strcmp(dirent_blk[l].name, f_subdir_basename)!= 0) {
+                            all_dirents_invalid = 0;
+                        }
+                    }
+                    for(int l = k+1; l < dirents_per_blk; ++l) {
+                        if(dirent_blk[l].valid && strcmp(dirent_blk[l].name, f_subdir_basename)!= 0) {
+                            all_dirents_invalid = 0;
+                        }
+                        /* Shifts all directory entries after the removed directory. */
+                        dirent_blk[l-1] = dirent_blk[l];
+                        /* TODO don't know if this copies the struct info or just a pointer. */
+                        // memcpy(&dirent_blk[l-1], &dirent_blk[l], sizeof(struct dirent));
+                    }
+
+                    /* Invalidate last directory entry in block. */
+                    dirent_blk[dirents_per_blk-1].valid = 0;
+
+                    /* If all entries in the dirent block are invalid. */
+                    if(all_dirents_invalid) {
+
+                        /* Invalidate dirent block. */
+                        unset_bitmap(d_bitmap, inode.direct_ptr[j]);
+
+                        /* Check if direct pointer will still be used after removal
+                         * and shift pointers after the directory to be removed down 1. */
+                        int all_direct_pointers_invalid = 1;
+                        if(i < 0) {
+                            all_direct_pointers_invalid = 0;
+                        }
+                        for(int l = 0; l < j; ++l) {
+                            if(ptr_blk[l] >= 0) {
+                                all_direct_pointers_invalid = 0;
+                            }
+                            all_direct_pointers_invalid = 0;
+                        }
+                        for(int l = j+1; l < 16; ++l) {
+                            if(ptr_blk[l] >= 0) {
+                                all_direct_pointers_invalid = 0;
+                            }
+                            /* Shift pointers down. */
+                            ptr_blk[l-1] = ptr_blk[l];
+                        }
+
+                        /* Invalidate last direct pointer. */
+                        inode.direct_ptr[15] = -1;
+
+
+                        /* If all entries in the pointer block are invalid and if the block
+                         * is not the direct pointer in the inode.                          */
+                        if(all_direct_pointers_invalid) {
+
+                            /* Invalidate data block. */
+                            unset_bitmap(d_bitmap, inode.indirect_ptr[i]);
+
+                            /* Shift all indirect pointer entries. */
+                            for(int l = i+1; l < 8; ++l) {
+                                inode.indirect_ptr[l-1] = inode.indirect_ptr[l];
+                            }
+
+                            /* Invalidate last entry of indirect pointer array. */
+                            inode.indirect_ptr[7] = -1;
+                        } else {
+                            /* If ptr_blk refers to a block pointed to in an indirect pointer. */
+                            if(i >= 0) {
+                                /* Write ptr_blk to the direct block address of the indirect pointer entry. */
+                                bio_write((superblock.d_start_blk + inode.indirect_ptr[i]), ptr_blk);
+                            } else {
+                                /* Copy ptr_blk to the direct pointer array. */
+                                memcpy(inode.direct_ptr, ptr_blk, sizeof(inode.direct_ptr));
+                            }
+                        }
+
+                        /* Write data blocks and inode back to disk. */
+                        writei(inode.ino, &inode);
+                    } else {
+                        /* Write dirent block to disk. */
+                        bio_write(superblock.d_start_blk + ptr_blk[j], dirent_blk);
+                    }
+
+                    /* Invalidate all blocks pointed to by the inode of the directory
+                     * to be removed.                                                       */
+                    for(int l = 0; l < 16; ++l) {
+                        if(to_be_removed_inode.direct_ptr[l] == -1) {
+                            break;
+                        }
+                        unset_bitmap(d_bitmap, to_be_removed_inode.direct_ptr[l]);
+                    }
+
+                    /* Invalidate the inode of the directory to be removed. */
+                    unset_bitmap(i_bitmap, to_be_removed_inode.ino);
+
+                    /* Write bitmaps back to disk. */
+                    char *d_bitmap_blk = malloc(BLOCK_SIZE);
+                    char *i_bitmap_blk = malloc(BLOCK_SIZE);
+                    if(d_bitmap_blk == NULL || i_bitmap_blk == NULL) {
+                        DISK_ERROR = -1;
+                        stop = 1;
+                        break;
+                    }
+                    memcpy(d_bitmap_blk, d_bitmap, sizeof(d_bitmap));
+                    memcpy(i_bitmap_blk, i_bitmap, sizeof(i_bitmap));
+                    bio_write(superblock.d_bitmap_blk, d_bitmap_blk);
+                    bio_write(superblock.i_bitmap_blk, i_bitmap_blk);
+                    free(d_bitmap_blk);
+                    free(i_bitmap_blk);
+
+                    stop = 1;
+                    found = 1;
+                    break;
                 }
 
-                /* If a duplicate directory is found. */
-                if (strcmp(path, dirent_blk[k].name) == 0) {
-                    duplicate = 1;
-                    stop = 1;
+                if(stop) {
                     break;
                 }
             }
+        }
 
-            /* If we reached unused section of array, break out of
-             * direct array loop.                                   */
-            if (stop) break;
+        if(stop) {
+            break;
         }
 
         /* If we haven't searched all valid indirect pointer entries,
@@ -394,132 +700,38 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
             /* If we've reached invalid indirect pointer entries
              * section.                                             */
             if(inode.indirect_ptr[i] == -1) {
-                first_invalid_indirect_blk = i;
                 stop = 1;
                 break;
             }
-            if (bio_read(inode.indirect_ptr[i], ptr_blk) < 0) {
+
+            /* Get data pointed to in indirect pointer block and write it to ptr_blk */
+            if(bio_read((superblock.d_start_blk + inode.indirect_ptr[i]), ptr_blk) < 0) {
                 ERROR("Failed to read disk");
                 stop = 1;
                 DISK_ERROR = 1;
             }
-            last_valid_indirect_blk = i;
-        } else break;
+        } else {
+            break;
+        }
     }
 
-
-    // Step 3: Add directory entry in dir_inode's data block and write to disk
-    // Allocate a new data block for this directory if it does not exist
-    // Update directory inode
-    // Write directory entry
-    /* Use single iteration loop for quickly exiting function to avoid
-     * duplicate lines frees/returns and to avoid unwieldy if statement
-     * logic for disk error handling.                                   */
-    while (duplicate == 0) {
-
-        int dirent_indx = first_invalid_dirent_slot;
-        int ptr_indx = last_valid_indirect_blk;
-
-        /* Get new available inode number. */
-        int new_ino = get_avail_ino();
-        if(new_ino < 0) {
-            TRACEBACK;
-            DISK_ERROR = 1;
-            break;
-        }
-
-        /* Create directory entry. */
-        dirent.ino = new_ino;
-        dirent.valid = 0;
-        strcpy(dirent.name, f_basename);
-
-        /* If there doesn't exist an invalid directory entry in already allocated blocks.
-         * Else, read the dirent block into memory.  */
-        if (first_invalid_dirent_slot < 0) {
-
-            /* Get free data block address and initialize it. */
-            int new_dirent_blkno = get_avail_blkno();
-            for(int i = 0; i < dirents_per_blk; ++i) {
-                dirent_blk[i].valid = 0;
-            }
-
-            /* If there exists an unset direct pointer block.
-             * Else if there exists indirect blocks that haven't been set. */
-            if (first_invalid_direct_blk > 0) {
-                /* Set the direct pointer to the new dirent block. */
-                inode.direct_ptr[first_invalid_direct_blk] =  new_dirent_blkno;
-            } else if (first_invalid_indirect_blk >= 0) {
-                /* Get a free data block's address and link to indirect pointer array. */
-                int new_direct_blkno = get_avail_blkno();
-                inode.indirect_ptr[first_invalid_indirect_blk] = new_direct_blkno;
-
-                /* Initialize direct array block. */
-                ptr_blk[0] = new_dirent_blkno;
-                for (int i = 1; i < 16; ++i) {
-                    ptr_blk[i] = -1;
-                }
-
-                /* Write direct array block to the now, not free, data block's address. */
-                if(bio_write(new_direct_blkno, ptr_blk) < 0) {
-                    ERROR("Failed to write to disk");
-                    DISK_ERROR = -1;
-                    break;
-                }
-
-                /* Set pointer and dirent indexes for write operation. */
-                dirent_indx = 0;
-                ptr_indx = 0;
-            } else {
-                ERROR("Max amount of directory entries reached.");
-                DISK_ERROR = -1;
-                break;
-            }
-        } else if (bio_read(last_valid_direct_blk, dirent_blk) < 0) {
-            ERROR("Failed to read disk");
-            DISK_ERROR = -1;
-            break;
-        }
-
-        /* Copy new dirent into dirent block */
-        memcpy(&dirent_blk[dirent_indx], &dirent, sizeof(struct dirent));
-
-        /* Write dirent block to disk */
-        if(bio_write(ptr_blk[ptr_indx], dirent_blk) < 0) {
-            ERROR("Failed to write to disk");
-            DISK_ERROR = 1;
-            break;
-        }
-
-        /* Update links in inode */
-        inode.link++;
-
-        /* Exit loop normally */
-        duplicate = 1;
-    }
 
     free(fname_CPY1);
     free(fname_CPY2);
     free(fname_CPY3);
     free(dirent_blk);
     free(ptr_blk);
-    if (DISK_ERROR) return -1;
-    if (duplicate) {
-        ERROR("Directory of the same name already exists");
+    if(DISK_ERROR) {
         return -1;
     }
-    return 0;
-}
-
-int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
-
-    // TODO Want to keep valid and invalid blocks in pointer arrays separated into left and right sections.
-    // TODO Separate invalid and valid dirents into sections.
-    // Step 1: Read dir_inode's data block and checks each directory entry of dir_inode
-
-    // Step 2: Check if fname exist
-
-    // Step 3: If exist, then remove it from dir_inode's data block and write to disk
-
+    if(has_files) {
+        ERROR("Directory is not empty");
+        return -1;
+    }
+    if(found == 0) {
+        ERROR("Failed to find directory to be deleted");
+        return -1;
+    }
     return 0;
 }
 
@@ -530,6 +742,9 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 
     // Step 1: Resolve the path name, walk through path, and finally, find its inode.
     // Note: You could either implement it in a iterative way or recursive way
+    struct dirent dirent = {0};
+    dir_find(ino, path, strlen(path), &dirent);
+    readi(dirent.ino, inode);
 
     return 0;
 }
@@ -542,7 +757,7 @@ int tfs_mkfs() {
     dev_init(diskfile_path);
 
     void *blk = malloc(BLOCK_SIZE);
-    if (blk == NULL) {
+    if(blk == NULL) {
         ERROR("Failed to allocate memory");
         return -1;
     }
@@ -555,11 +770,11 @@ int tfs_mkfs() {
             .i_bitmap_blk   = 1,
             .d_bitmap_blk   = 2,
             .i_start_blk    = 3,
-            .d_start_blk    = (2 + ((MAX_INUM/i_per_blk) + (MAX_INUM%i_per_blk != 0))) + 1
+            .d_start_blk    = (2 + ((MAX_INUM/i_per_blk) + ((MAX_INUM%i_per_blk) != 0))) + 1
     };
 
     memcpy(blk, &superblock, sizeof(struct superblock));
-    if (bio_write(0, blk) < 0) {
+    if(bio_write(0, blk) < 0) {
         ERROR("Failed to write to disk");
         free(blk);
         return -1;
@@ -574,19 +789,20 @@ int tfs_mkfs() {
     dirent[0] = (struct dirent) { .ino = 0, .valid = 1, .name = "/"  };
     dirent[1] = (struct dirent) { .ino = 1, .valid = 1, .name = "."  };
     dirent[2] = (struct dirent) { .ino = 2, .valid = 1, .name = ".." };
-    for (int i = 0; i < dirent_blks; ++i) {
-        for (int j = 0; j < dirents_per_blk; ++j) {
+
+    for(int i = 0; i < dirent_blks; ++i) {
+        for(int j = 0; j < dirents_per_blk; ++j) {
             int pos = (i*dirent_blks) + j;
-            if (pos > 2) {
-                while (j < dirents_per_blk) {
+            if(pos > 2) {
+                while(j < dirents_per_blk) {
                     ((struct dirent *)blk)[pos].valid = 0;
                     j++;
                 }
                 break;
             }
-            memcpy(&((struct dirent *)blk)[pos], &dirent[pos], sizeof(struct dirent));
+            memcpy(&((struct dirent *)blk)[j], &dirent[pos], sizeof(struct dirent));
         }
-        if (bio_write((superblock.d_start_blk+1), blk) < 0) {
+        if(bio_write((superblock.d_start_blk + i), blk) < 0) {
             ERROR("Failed to write to disk");
             free(blk);
             return -1;
@@ -601,8 +817,8 @@ int tfs_mkfs() {
             .type   = directory,
             .link   = 0
     };
-    for (int i = 0; i < 8; ++i) {
-        if (i < dirent_blks) {
+    for(int i = 0; i < 8; ++i) {
+        if(i < dirent_blks) {
             i_root.direct_ptr[i]    =  i;
             i_root.link++;
         } else {
@@ -612,7 +828,7 @@ int tfs_mkfs() {
             i_root.indirect_ptr[i]  = -1;
     }
     memcpy(blk, &i_root, sizeof(struct inode));
-    if (bio_write(superblock.i_start_blk, blk) < 0) {
+    if(bio_write(superblock.i_start_blk, blk) < 0) {
         ERROR("Failed to write to disk");
         free(blk);
         return -1;
@@ -626,28 +842,26 @@ int tfs_mkfs() {
  * FUSE file operations
  */
 static void *tfs_init(struct fuse_conn_info *conn) {
+    i_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
+    dirents_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
 
     // Step 1a: If disk file is not found, call mkfs
-    if (dev_open(diskfile_path)) {
-        if (tfs_mkfs()) {
+    if(dev_open(diskfile_path) < 0) {
+        if(tfs_mkfs() < 0) {
             exit(EXIT_FAILURE);
         }
         return NULL;
     }
-
     // Step 1b: If disk file is found, just initialize in-memory data structures
     // and read superblock from disk
-    if ((bio_read(0, &superblock)) < 0) {
+    if((bio_read(0, &superblock)) < 0) {
         ERROR("Failed to read disk");
         exit(EXIT_FAILURE);
     }
-    if (superblock.magic_num != MAGIC_NUM) {
+    if(superblock.magic_num != MAGIC_NUM) {
         ERROR( "disk's filesystem is not recognized");
         exit(EXIT_FAILURE);
     }
-
-    i_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
-    dirents_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
 
     return NULL;
 }
