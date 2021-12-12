@@ -4,6 +4,8 @@ LDFLAGS=-lfuse
 
 OBJ=tfs.o block.o
 
+all: tfs
+
 tfs: $(OBJ)
 	$(CC) $(OBJ) $(LDFLAGS) -o tfs
 
