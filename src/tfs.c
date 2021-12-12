@@ -705,31 +705,47 @@ int tfs_mkfs() {
         return -1;
     }
 
-	// update inode for root directory
-    struct inode i_root = {
+
+    int dirent_blks = (3/dirents_per_blk) + ((3%dirents_per_blk) != 0);
+
+
+    // update inode for root directory
+    struct inode root_inode = {
         .ino = 0,
         .valid = 1,
-        .size = ((3/dirents_per_blk) +  !(3%dirents_per_blk))*BLOCK_SIZE,
+        .size = dirent_blks*BLOCK_SIZE,
         .type = directory,
-        .link = 0
+        .link = 3,
+        .vstat = {
+                .st_ino = 0,
+                .st_mode = S_IFDIR | 0755,
+                .st_nlink = 2,
+                .st_blksize = BLOCK_SIZE,
+                .st_blocks = dirent_blks,
+                .st_size = dirent_blks*BLOCK_SIZE
+        }
     };
+    time(&root_inode.vstat.st_atime);
+    time(&root_inode.vstat.st_mtime);
+    time(&root_inode.vstat.st_ctime);
+
 
 
     // initialize inode direct and indirect pointer arrays
     for(int i = 0; i < 8; ++i) {
-        i_root.direct_ptr[i] = -1;
-        i_root.indirect_ptr[i] = -1;
-        i_root.indirect_ptr[15-i] = -1;
+        root_inode.direct_ptr[i] = -1;
+        root_inode.indirect_ptr[i] = -1;
+        root_inode.indirect_ptr[15-i] = -1;
     }
 
 
     // write root inode to disk
-    writei(i_root.ino, &i_root);
+    writei(root_inode.ino, &root_inode);
 
     // link directory entry blocks to pointer arrays
-    if(dir_add(i_root, i_root.ino, "/", strlen("/"))
-    || dir_add(i_root, i_root.ino, ".", strlen("."))
-    || dir_add(i_root, i_root.ino, "..", strlen(".."))
+    if(dir_add(root_inode, root_inode.ino, "/", strlen("/"))
+    || dir_add(root_inode, root_inode.ino, ".", strlen("."))
+    || dir_add(root_inode, root_inode.ino, "..", strlen(".."))
     ) DISK_ERROR = -1;
 
 
@@ -779,13 +795,15 @@ static void tfs_destroy(void *userdata) {
 static int tfs_getattr(const char *path, struct stat *stbuf) {
 
     struct inode inode;
-    // TODO use root path for now
+
+
+    // Step 1: call get_node_by_path() to get inode from path
     get_node_by_path(path, 0, &inode);
 
 	// Step 2: fill attribute of file into stbuf from inode
-    stbuf->st_mode   = S_IFDIR | 0755;
-    stbuf->st_nlink  = 2;
+    memcpy(stbuf, &inode.vstat, sizeof(struct stat));
     time(&stbuf->st_mtime);
+
 
 	return 0;
 }
