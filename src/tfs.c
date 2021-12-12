@@ -227,11 +227,13 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
         // search inode for directory/subdirectory
         memcpy(ptr_blk, inode.direct_ptr, sizeof(inode.direct_ptr));
         for(int i = -1; i < 8; ) {
-
             for(int j = 0; j < 16; ++j) {
 
                 // if unused section of direct array has been reached
                 if(ptr_blk[j] < 0) break;
+
+                // clear block
+                memset(dirent_blk, 0, BLOCK_SIZE);
 
                 // read block from the direct array entry
                 if(bio_read((superblock.d_start_blk + ptr_blk[j]), dirent_blk) < 0) {
@@ -645,12 +647,14 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
  * namei operation
  */
 int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
-	
+
+    struct dirent dirent = {0};
+
 	// Step 1: Resolve the path name, walk through path, and finally, find its inode.
 	// Note: You could either implement it in a iterative way or recursive way
-    struct dirent dirent = {0};
-    dir_find(ino, path, strlen(path), &dirent);
+    if(dir_find(0, path, strlen(path), &dirent) < 0) return -1;
     readi(dirent.ino, inode);
+
 
 	return 0;
 }
@@ -763,22 +767,25 @@ int tfs_mkfs() {
  */
 static void *tfs_init(struct fuse_conn_info *conn) {
 
-	// Step 1a: If disk file is not found, call mkfs
+    // Step 1a: If disk file is not found, call mkfs
     if(dev_open(diskfile_path) < 0) {
         if(tfs_mkfs() < 0) exit(EXIT_FAILURE);
         return NULL;
     }
 
-  // Step 1b: If disk file is found, just initialize in-memory data structures
-  // and read superblock from disk
+
+    // Step 1b: If disk file is found, just initialize in-memory data structures
+    // and read superblock from disk
     if((bio_read(0, &superblock)) < 0) {
         ERROR("Failed to read disk");
         exit(EXIT_FAILURE);
     }
+
     if(superblock.magic_num != MAGIC_NUM) {
         ERROR( "Disk's filesystem is not recognized");
         exit(EXIT_FAILURE);
     }
+
 
 	return NULL;
 }
@@ -798,7 +805,7 @@ static int tfs_getattr(const char *path, struct stat *stbuf) {
 
 
     // Step 1: call get_node_by_path() to get inode from path
-    get_node_by_path(path, 0, &inode);
+    if(get_node_by_path(path, 0, &inode) < 0) return -1;
 
 	// Step 2: fill attribute of file into stbuf from inode
     memcpy(stbuf, &inode.vstat, sizeof(struct stat));
@@ -810,19 +817,89 @@ static int tfs_getattr(const char *path, struct stat *stbuf) {
 
 static int tfs_opendir(const char *path, struct fuse_file_info *fi) {
 
-	// Step 1: Call get_node_by_path() to get inode from path
+    struct inode inode = {0};
 
-	// Step 2: If not find, return -1
+
+	// Step 1: Call get_node_by_path() to get inode from path
+    // Step 2: If not find, return -1
+    if(get_node_by_path(path, 0, &inode) < 0) return -1;
+
 
     return 0;
 }
 
 static int tfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
 
+    int DISK_ERROR = 0;
+    offset = 0;
+
+    struct inode *inode = {0};
+    struct inode *i_blk = malloc(BLOCK_SIZE);
+    struct dirent *dirent_blk = malloc(BLOCK_SIZE);
+    int *ptr_blk = malloc(BLOCK_SIZE);
+
+
 	// Step 1: Call get_node_by_path() to get inode from path
+    if(get_node_by_path(path, 0, &inode) < 0) return -1;
 
 	// Step 2: Read directory entries from its data blocks, and copy them to filler
+    memcpy(ptr_blk, inode->direct_ptr, sizeof(inode->direct_ptr));
+    for(int i = 0; i < 8; ) {
+        for(int j = 0; j < 16; ++j) {
 
+            // if you reach unused section of pointer array
+            if(ptr_blk[j] < 0) break;
+
+            // clear block
+            memset(dirent_blk, 0, BLOCK_SIZE);
+
+            // read block from the direct array entry
+            if(bio_read((superblock.d_start_blk+ ptr_blk[j]), dirent_blk) < 0) {
+                DISK_ERROR = -1;
+                break;
+            }
+
+            // search for directory entries in the block
+            for(int k = 0; k < dirents_per_blk; ++k) {
+
+                // if we've reached unused section of the directory entries block
+                if(!dirent_blk[k].valid) break;
+
+                //get block's inode
+                struct inode temp_inode = {0};
+                readi(dirent_blk[k].ino, &temp_inode);
+
+                // add entry to buffer
+                if(!filler(buffer, dirent_blk[k].name, &temp_inode.vstat, (((++offset)*sizeof(struct dirent))))) {
+                    DISK_ERROR = -1;
+                }
+            }
+        }
+
+        // if stop is set, break outer loop
+        if(DISK_ERROR) break;
+
+        // if we haven't checked all indirect array entries
+        if((++i) < 8) {
+
+            // if the unused pointer section of the indirect pointer array has been reached
+            if(inode->indirect_ptr[i] < 0) break;
+
+            // read array block from the indirect array entry
+            if(bio_read((superblock.d_start_blk + inode->indirect_ptr[i]), ptr_blk)) {
+                DISK_ERROR = 1;
+                break;
+            }
+        }
+    }
+
+
+    free(ptr_blk);
+    free(dirent_blk);
+    if(DISK_ERROR) {
+        perror("Failed to read directory");
+        return -1;
+    }
 	return 0;
 }
 
