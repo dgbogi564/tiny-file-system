@@ -14,10 +14,10 @@ echo "\"$1\" doesn't exist, creating directory..."
 mkdir -p "$1"
 
 # compile and run tiny file system
-cd src || cd ../src || exit
+cd src || cd ../src || (echo "Failed to change directories" && exit)
 make clean
 make || exit
-./tfs -d -s "$1"
+./tfs -f -d -s "$1"
 
 # check if tiny file system was mounted successfully
 findmnt "$1"

@@ -31,6 +31,7 @@ static int i_per_blk, dirents_per_blk;
 
 // Declare your in-memory data structures here
 struct superblock superblock;
+struct inode curdir_inode;
 unsigned char i_bitmap[MAX_INUM];
 unsigned char d_bitmap[MAX_DNUM];
 
@@ -330,6 +331,8 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     }
     readi(dirent.ino, &inode);
 
+    /* Update subdirectory's inode's size. */
+
     // Step 1: Read dir_inode's data block and check each directory entry of dir_inode
     // Step 2: Check if fname (directory name) is already used in other entries
     if(dir_find(inode.ino, f_basename, strlen(f_basename), &dirent) >= 0) {
@@ -341,7 +344,6 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     // Update directory inode
     // Write directory entry
     if(duplicate == 0) {
-
         // TODO should we make new inode?
 
         /* Create new inode and write to disk. */
@@ -376,7 +378,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                     for(int k = 0; k < dirents_per_blk; ++k) {
                         dirent_blk[0].valid = 0;
                     }
-                    bio_write(superblock.d_start_blk + f_ino, dirent_blk);
+                    bio_write(superblock.d_start_blk + new_blkno, dirent_blk);
 
                     /* Link to direct array. */
                     ptr_blk[j] = new_blkno;
@@ -423,18 +425,23 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 
             /* If we've reached invalid section of the indirect pointer array. */
             if(inode.indirect_ptr[i] == -1) {
+
                 /* Create and initialize new direct pointer array data block. */
                 int new_blkno = get_avail_blkno();
                 bio_read((superblock.d_start_blk + new_blkno), ptr_blk);
                 for(int j = 0; j < 16; ++j) {
                     ptr_blk[j] = -1;
                 }
+
                 /* Write new direct pointer array block. */
                 bio_write((superblock.d_start_blk + new_blkno), ptr_blk);
 
-
                 /* Set indirect pointer entry to the new block's number. */
                 inode.indirect_ptr[i] = new_blkno;
+
+                /* Update inode's size. */
+                inode.size += BLOCK_SIZE;
+
                 break;
             }
 
@@ -446,6 +453,9 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                 break;
             }
         }
+
+        inode.link++;
+        writei(inode.ino, &inode);
     }
 
     free(fname_CPY1);
@@ -859,9 +869,19 @@ static void *tfs_init(struct fuse_conn_info *conn) {
         exit(EXIT_FAILURE);
     }
     if(superblock.magic_num != MAGIC_NUM) {
-        ERROR( "disk's filesystem is not recognized");
+        ERROR( "Disk's filesystem is not recognized");
         exit(EXIT_FAILURE);
     }
+
+    struct inode *i_blk = malloc(BLOCK_SIZE);
+    if(i_blk == NULL) {
+        ERROR("Failed to allocate memory.");
+    }
+
+    if(bio_read(superblock.i_start_blk, i_blk) < 0) {
+        ERROR("Failed to read disk");
+    }
+    memcpy(&curdir_inode, i_blk, sizeof(struct inode));
 
     return NULL;
 }
@@ -869,14 +889,18 @@ static void *tfs_init(struct fuse_conn_info *conn) {
 static void tfs_destroy(void *userdata) {
 
     // Step 1: De-allocate in-memory data structures
+    // (skipped, all in-memory data structures are on the stack)
 
     // Step 2: Close diskfile
+    dev_close(diskfile_path);
 
 }
 
 static int tfs_getattr(const char *path, struct stat *stbuf) {
 
     // Step 1: call get_node_by_path() to get inode from path
+    struct inode inode;
+    get_node_by_path(path, curdir_inode.ino, &inode);
 
     // Step 2: fill attribute of file into stbuf from inode
 
