@@ -1023,7 +1023,7 @@ static int tfs_mkdir(const char *path, mode_t mode) {
             .link = 0,
             .vstat = {
                     .st_ino = ino,
-                    .st_mode = S_IFDIR | 0755,
+                    .st_mode = mode,
                     .st_nlink = 0,
                     .st_blksize = BLOCK_SIZE,
                     .st_blocks = dirent_blks,
