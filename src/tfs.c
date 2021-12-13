@@ -47,9 +47,7 @@ int get_avail_ino() {
 	// Step 1: Read inode bitmap from disk
     int *bitmap_blk = calloc(1, BLOCK_SIZE);
     if(!bitmap_blk) {
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
     if(bio_read(superblock.i_bitmap_blk, bitmap_blk) < 0) {
@@ -90,9 +88,7 @@ int get_avail_blkno() {
 	// Step 1: Read data block bitmap from disk
     int *bitmap_blk = calloc(1, BLOCK_SIZE);
     if(!bitmap_blk) {
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
     if(bio_read(superblock.d_bitmap_blk, bitmap_blk) < 0) {
@@ -113,9 +109,7 @@ int get_avail_blkno() {
 
     // if no available data block has been found
     if(avail_blkno < 0) {
-#if DEBUG
-        perror("No available data block");
-#endif
+        ERROR("No available data block");
         return -1;
     }
 
@@ -135,9 +129,7 @@ int readi(uint16_t ino, struct inode *inode) {
 
     struct inode *i_blk = malloc(BLOCK_SIZE);
     if(!i_blk) {
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -166,9 +158,7 @@ int writei(uint16_t ino, struct inode *inode) {
 
     struct inode *i_blk = malloc(BLOCK_SIZE);
     if(!i_blk) {
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -226,13 +216,13 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
     || !fname_CPY2
     || !dirent_blk
     || !ptr_blk
-    || readi(ino, &inode) < 0
    ) {
         if(fname_CPY1)  free(fname_CPY1);
         if(fname_CPY2)  free(fname_CPY2);
         if(dirent_blk)  free(dirent_blk);
         if(ptr_blk)     free(ptr_blk);
         ERROR("Failed to allocate memory");
+        return -1;
     }
     // get parent directory
     char *f_basename = basename(fname_CPY2);
@@ -240,10 +230,23 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
     // Step 3: Read directory's data block and check each directory entry.
     // If the name matches, then copy directory entry to dirent structure
-    char *path;
-    if (fname[0] == '/') path = "/";
-    else path = strtok(fname_CPY1, delim);
-    for(; path != NULL; path = strtok(NULL, delim)) {
+    if(fname[0] == '/'
+    && readi(0, &inode) < 0
+    ) {
+        free(fname_CPY1);
+        free(fname_CPY2);
+        free(dirent_blk);
+        free(ptr_blk);
+        return -1;
+    } else if(readi(ino, &inode) < 0) {
+        free(fname_CPY1);
+        free(fname_CPY2);
+        free(dirent_blk);
+        free(ptr_blk);
+        return -1;
+    }
+
+    for(char *path = strtok(fname_CPY1, delim); path != NULL; path = strtok(NULL, delim)) {
 
         // reset found to 0
         FOUND = 0;
@@ -258,9 +261,6 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
                     STOP = 1;
                     break;
                 }
-
-                // clear block
-                memset(dirent_blk, 0, BLOCK_SIZE);
 
                 // read block from the direct array entry
                 if(bio_read((superblock.d_start_blk + ptr_blk[j]), dirent_blk) < 0) {
@@ -320,15 +320,11 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
     free(dirent_blk);
     free(ptr_blk);
     if(DISK_ERROR) {
-#if DEBUG
-        perror("Failed to find directory");
-#endif
+        ERROR("Failed to find directory");
         return -1;
     }
     if(!FOUND) {
-#if DEBUG
-        perror("Directory doesn't exist");
-#endif
+        ERROR("Directory doesn't exist");
         return -1;
     }
 	return 0;
@@ -385,9 +381,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 
     // check if a directory of the same name already exists
     if(!dir_find(dir_inode.ino, f_basename, strlen(f_basename), &dirent)) {
-#if DEBUG
-        perror("Directory already exists");
-#endif
+        ERROR("Directory already exists");
         free(fname_CPY1);
         free(fname_CPY2);
         free(dirent_blk);
@@ -461,10 +455,6 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
             }
 
             // update directory inode
-            if(strcmp(fname, "..")) {
-                dir_inode.link++;
-                dir_inode.vstat.st_nlink++;
-            }
             if(writei(dir_inode.ino, &dir_inode) < 0) {
                 DISK_ERROR = 1;
                 break;
@@ -519,11 +509,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                 DISK_ERROR = 1;
                 break;
             }
-        } else {
-#if DEBUG
-            perror("All directory entries are in use");
-#endif
-        }
+        } else ERROR("All directory entries are in use");
     }
 
 
@@ -532,9 +518,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     free(dirent_blk);
     free(ptr_blk);
     if(DISK_ERROR) {
-#if DEBUG
-        perror("Failed to make directory");
-#endif
+        ERROR("Failed to make directory");
         return -1;
     }
 	return 0;
@@ -579,9 +563,7 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
     readi(dirent.ino, &dir_inode);
     if(dir_find(dir_inode.ino, f_basename, strlen(f_basename), &dirent)) {
-#if DEBUG
-        perror("Directory doesn't exists");
-#endif
+        ERROR("Directory doesn't exists");
         free(fname_CPY1);
         free(fname_CPY2);
         free(dirent_blk);
@@ -644,7 +626,7 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
                         // clear block in disk
                         memset(ptr_blk, 0, BLOCK_SIZE);
-                        if (bio_write((superblock.d_start_blk + dir_inode.indirect_ptr[i]), ptr_blk) < 0) {
+                        if(bio_write((superblock.d_start_blk + dir_inode.indirect_ptr[i]), ptr_blk) < 0) {
                             DISK_ERROR = 1;
                             break;
                         }
@@ -697,9 +679,7 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
                 break;
             }
         } else {
-#if DEBUG
-            perror("Directory to remove not found");
-#endif
+            ERROR("Directory to remove not found");
         }
     }
 
@@ -708,15 +688,11 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
     free(dirent_blk);
     free(ptr_blk);
     if(DISK_ERROR) {
-#if DEBUG
-        perror("Failed to remove directory");
-#endif
+        ERROR("Failed to remove directory");
         return -1;
     }
     if(!DIRECTORY_REMOVED) {
-#if DEBUG
-        perror("Directory doesn't exists");
-#endif
+        ERROR("Directory doesn't exists");
         return -1;
     }
 	return 0;
@@ -746,9 +722,7 @@ int tfs_mkfs() {
     int DISK_ERROR = 0;
     void *blk = calloc(1, BLOCK_SIZE);
     if(!blk) {
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -776,7 +750,7 @@ int tfs_mkfs() {
     // initialize inode bitmap
     memset(blk, 0, BLOCK_SIZE);
     memcpy(blk, i_bitmap, sizeof(i_bitmap));
-    if (bio_write(superblock.i_bitmap_blk, blk) < 0) {
+    if(bio_write(superblock.i_bitmap_blk, blk) < 0) {
         free(blk);
         return -1;
     }
@@ -785,7 +759,7 @@ int tfs_mkfs() {
 	// initialize data block bitmap
     memset(blk, 0, BLOCK_SIZE);
     memcpy(blk, d_bitmap, sizeof(d_bitmap));
-    if (bio_write(superblock.d_bitmap_blk, blk) < 0) {
+    if(bio_write(superblock.d_bitmap_blk, blk) < 0) {
         free(blk);
         return -1;
     }
@@ -798,33 +772,37 @@ int tfs_mkfs() {
         .valid = 1,
         .size = dirent_blks*BLOCK_SIZE,
         .type = directory,
-        .link = 3,
+        .link = 2,
         .vstat = {
                 .st_ino = 0,
                 .st_mode = S_IFDIR | 0755,
                 .st_nlink = 2,
                 .st_blksize = BLOCK_SIZE,
                 .st_blocks = dirent_blks,
-                .st_size = dirent_blks*BLOCK_SIZE
+                .st_size = dirent_blks*BLOCK_SIZE,
         }
     };
     time(&root_inode.vstat.st_atime);
     time(&root_inode.vstat.st_mtime);
     time(&root_inode.vstat.st_ctime);
-
-
-
     // initialize inode direct and indirect pointer arrays
     for(int i = 0; i < 8; ++i) {
         root_inode.direct_ptr[i] = -1;
         root_inode.direct_ptr[15-i] = -1;
         root_inode.indirect_ptr[i] = -1;
     }
+    // update root directory's bitmap
+    set_bitmap(i_bitmap, 0);
+    memset(blk, 0, BLOCK_SIZE);
+    memcpy(blk, i_bitmap, sizeof(i_bitmap));
+    if(bio_write(superblock.i_bitmap_blk, blk) < 0) {
+        free(blk);
+        return -1;
+    }
+
 
     // link directory entry blocks to pointer arrays
-    if(dir_add(root_inode, root_inode.ino, "/", strlen("/"))
-    || readi(root_inode.ino, &root_inode) < 0
-    || dir_add(root_inode, root_inode.ino, ".", strlen("."))
+    if(dir_add(root_inode, root_inode.ino, ".", strlen("."))
     || readi(root_inode.ino, &root_inode) < 0
     || dir_add(root_inode, root_inode.ino, "..", strlen(".."))
     ) {
@@ -834,9 +812,7 @@ int tfs_mkfs() {
 
     free(blk);
     if(DISK_ERROR) {
-#if DEBUG
-        perror("Failed to initialize disk");
-#endif
+        ERROR("Failed to initialize disk");
         return -1;
     }
 	return 0;
@@ -868,6 +844,28 @@ static void *tfs_init(struct fuse_conn_info *conn) {
     }
 
 
+    unsigned char *bitmap_blk = malloc(BLOCK_SIZE);
+    if(!bitmap_blk) {
+        ERROR("Failed to allocate memory");
+        exit(EXIT_FAILURE);
+    }
+
+    // read i_bitmap
+    if(bio_read(superblock.i_bitmap_blk, bitmap_blk) < 0) {
+        free(bitmap_blk);
+        exit(EXIT_FAILURE);
+    }
+    memcpy(i_bitmap, bitmap_blk, sizeof(i_bitmap));
+
+    // read d_bitmap
+    if(bio_read(superblock.d_bitmap_blk, bitmap_blk) < 0) {
+        free(bitmap_blk);
+        exit(EXIT_FAILURE);
+    }
+    memcpy(d_bitmap, bitmap_blk, sizeof(d_bitmap));
+    free(bitmap_blk);
+
+
 	return NULL;
 }
 
@@ -886,7 +884,7 @@ static int tfs_getattr(const char *path, struct stat *stbuf) {
 
 
     // Step 1: call get_node_by_path() to get inode from path
-    if(get_node_by_path(path, 0, &inode) < 0) return -1;
+    if(get_node_by_path(path, 0, &inode) < 0) return -2;
 
 	// Step 2: fill attribute of file into stbuf from inode
     memcpy(stbuf, &inode.vstat, sizeof(struct stat));
@@ -977,9 +975,7 @@ static int tfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, o
     free(ptr_blk);
     free(dirent_blk);
     if(DISK_ERROR) {
-#if DEBUG
-        perror("Failed to read directory");
-#endif
+        ERROR("Failed to read directory");
         return -1;
     }
 	return 0;
@@ -995,9 +991,7 @@ static int tfs_mkdir(const char *path, mode_t mode) {
     || !path_CPY2) {
         if(path_CPY1) free(path_CPY1);
         if(path_CPY2) free(path_CPY2);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -1055,9 +1049,7 @@ static int tfs_mkdir(const char *path, mode_t mode) {
     || dir_add(inode, inode.ino, ".", strlen("."))
     || dir_add(inode, parent_inode.ino, "..", strlen(".."))
     ) {
-#if DEBUG
-        perror("Failed to create directory");
-#endif
+        ERROR("Failed to create directory");
         return -1;
     }
 
@@ -1077,9 +1069,7 @@ static int tfs_rmdir(const char *path) {
        || !path_CPY2) {
         if(path_CPY1) free(path_CPY1);
         if(path_CPY2) free(path_CPY2);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -1120,9 +1110,7 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
        || !path_CPY2) {
         if(path_CPY1) free(path_CPY1);
         if(path_CPY2) free(path_CPY2);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -1153,7 +1141,7 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
             .vstat = {
                     .st_ino = ino,
                     .st_mode = mode,
-                    .st_nlink = 0,
+                    .st_nlink = 1,
                     .st_blksize = 0,
                     .st_blocks = dirent_blks,
                     .st_size = 0,
@@ -1174,9 +1162,7 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 	// Step 5: Update inode for target file
 	// Step 6: Call writei() to write inode to disk
     if(dir_add(parent_inode, inode.ino, path_basename, strlen(path_basename))) {
-#if DEBUG
-        perror("Failed to create directory");
-#endif
+        ERROR("Failed to create directory");
         return -1;
     }
 
@@ -1205,9 +1191,7 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
     // if block and offset will reach max offset prematurely
     // if block and offset will reach max offset prematurely
     if((bytes_to_read + offset) > (BLOCK_SIZE*(9*16))) {
-#if DEBUG
-        perror("Offset and size will reach max possible data offset");
-#endif
+        ERROR("Offset and size will reach max possible data offset");
         return -1;
     }
     struct inode inode = {0};
@@ -1222,9 +1206,7 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
             ) {
         if(data_blk) free(data_blk);
         if(ptr_blk) free(ptr_blk);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -1241,9 +1223,7 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
 
             // if the unset pointer array section is reached
             if(ptr_blk[j] < 0) {
-#if DEBUG
-                perror("reached end of file, no more bytes to read");
-#endif
+                ERROR("reached end of file, no more bytes to read");
                 END_OF_FILE = 1;
                 break;
             }
@@ -1318,9 +1298,7 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
     int bytes_to_write = size;
     // if block and offset will reach max offset prematurely
     if((bytes_to_write+offset) > (BLOCK_SIZE*(9*16))) {
-#if DEBUG
-        perror("Offset and size will reach max possible data offset");
-#endif
+        ERROR("Offset and size will reach max possible data offset");
         return -1;
     }
     struct inode inode = {0};
@@ -1335,9 +1313,7 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
             ) {
         if(data_blk) free(data_blk);
         if(ptr_blk) free(ptr_blk);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
@@ -1360,11 +1336,14 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
 
                 // get available data block
                 ptr_blk[j] = get_avail_blkno();
-                // if failed to get an available data block
                 if(ptr_blk[j] < 0) {
                     DISK_ERROR = 1;
                     break;
                 }
+
+                //update inode
+                inode.link++;
+                inode.vstat.st_nlink++;
 
                 // clear data block
                 memset(data_blk, 0, BLOCK_SIZE);
@@ -1464,9 +1443,7 @@ static int tfs_unlink(const char *path) {
         if(clean_blk) free(clean_blk);
         if(path_CPY1) free(path_CPY1);
         if(path_CPY2) free(path_CPY2);
-#if DEBUG
-        perror("Failed to allocate memory");
-#endif
+        ERROR("Failed to allocate memory");
         return -1;
     }
 
