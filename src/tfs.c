@@ -232,7 +232,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
     // If the name matches, then copy directory entry to dirent structure
     char *path;
     if (fname[0] == '/') path = "/";
-    else path = strtok(NULL, delim);
+    else path = strtok(fname_CPY1, delim);
     for(; path != NULL; path = strtok(NULL, delim)) {
 
         // reset found to 0
@@ -405,10 +405,12 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 
                 // copy dirent entry into first spot of dirent block
                 memcpy(&dirent_blk[0], &f_dirent, sizeof(struct dirent));
-            } else {
+            }
+            // array is in use
+            else {
 
                 // read block from pointer array entry
-                bio_read(ptr_blk[j], dirent_blk);
+                bio_read(superblock.d_start_blk + ptr_blk[j], dirent_blk);
 
                 // search the directory entry block
                 for(int k = 0; k < dirents_per_blk; ++k) {
@@ -420,6 +422,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                         memcpy(&dirent_blk[k], &f_dirent, sizeof(struct dirent));
 
                         DIRECTORY_ADDED = 1;
+                        break;
                     }
                 }
 
@@ -433,16 +436,16 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                 break;
             }
 
-            // if it's a data block, copy the pointer array block to the direct pointer array
-            // else write pointer array block to disk
+            // if it's a direct pointer array, copy the pointer array block to the direct pointer array
             if(i < 0) memcpy(dir_inode.direct_ptr, ptr_blk, sizeof(dir_inode.direct_ptr));
+            // else write pointer array block to disk
             else if(bio_write((superblock.d_start_blk + dir_inode.indirect_ptr[i]), ptr_blk) < 0) {
                 DISK_ERROR = 1;
                 break;
             }
 
             // update directory inode
-            if(!strcmp(fname, "..")) {
+            if(strcmp(fname, "..")) {
                 dir_inode.link++;
                 dir_inode.vstat.st_nlink++;
             }
@@ -786,13 +789,14 @@ int tfs_mkfs() {
 
     // link directory entry blocks to pointer arrays
     if(dir_add(root_inode, root_inode.ino, "/", strlen("/"))
+    || readi(root_inode.ino, &root_inode) < 0
     || dir_add(root_inode, root_inode.ino, ".", strlen("."))
+    || readi(root_inode.ino, &root_inode) < 0
     || dir_add(root_inode, root_inode.ino, "..", strlen(".."))
-    ) DISK_ERROR = 1;
+    ) {
+        DISK_ERROR = 1;
+    }
 
-
-    // write root inode to disk
-    writei(root_inode.ino, &root_inode);
 
     free(blk);
     if(DISK_ERROR) {
@@ -1197,7 +1201,7 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
             if(blk_indx < first_blk_indx) continue;
 
             // read data block
-            if(bio_read(ptr_blk[j], data_blk) < 0) {
+            if(bio_read(superblock.d_start_blk + ptr_blk[j], data_blk) < 0) {
                 DISK_ERROR = 1;
                 break;
             }
@@ -1319,7 +1323,7 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
             if(blk_indx < first_blk_indx) continue;
 
             // read data block
-            if(bio_read(ptr_blk[j], data_blk) < 0) {
+            if(bio_read(superblock.d_start_blk + ptr_blk[j], data_blk) < 0) {
                 DISK_ERROR = 1;
                 break;
             }
