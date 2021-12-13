@@ -33,8 +33,8 @@ struct superblock superblock;
 unsigned char i_bitmap[MAX_INUM/8] = {0};
 unsigned char d_bitmap[MAX_DNUM/8] = {0};
 
-int i_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
-int dirents_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
+int i_per_blk = (double)BLOCK_SIZE/sizeof(struct dirent);
+int dirents_per_blk = (double)BLOCK_SIZE/sizeof(struct dirent);
 
 /* 
  * Get available inode number from bitmap
@@ -127,7 +127,7 @@ int get_avail_blkno() {
  */
 int readi(uint16_t ino, struct inode *inode) {
 
-    struct inode *i_blk = (struct inode *)malloc(BLOCK_SIZE);
+    struct inode *i_blk = malloc(BLOCK_SIZE);
     if(!i_blk) {
         perror("Failed to allocate memory");
         return -1;
@@ -135,9 +135,11 @@ int readi(uint16_t ino, struct inode *inode) {
 
 
     // Step 1: Get the inode's on-disk block number
+    int i_blkno = ino/i_per_blk;
+
+
     // Step 2: Get offset of the inode in the inode on-disk block
     int indx = ino%i_per_blk;
-    int i_blkno = (ino/i_per_blk) + (!indx);
 
 
     // Step 3: Read the block from disk and then copy into inode structure
@@ -154,8 +156,7 @@ int readi(uint16_t ino, struct inode *inode) {
 
 int writei(uint16_t ino, struct inode *inode) {
 
-    free(malloc(sizeof(int[35])));
-    struct inode *i_blk = calloc(1, BLOCK_SIZE);
+    struct inode *i_blk = malloc(BLOCK_SIZE);
     if(!i_blk) {
         perror("Failed to allocate memory");
         return -1;
@@ -163,22 +164,25 @@ int writei(uint16_t ino, struct inode *inode) {
 
 
 	// Step 1: Get the block number where this inode resides on disk
+    int i_blkno = ino/i_per_blk;
+
+
 	// Step 2: Get the offset in the block where this inode resides on disk
     int indx = ino%i_per_blk;
-    int i_blkno = (ino/i_per_blk) + (!indx);
-
-
-    // copy inode to inode block
-    memcpy(i_blk, inode, sizeof(struct inode));
 
 
 	// Step 3: Write inode to disk
+
+    // read block from disk to i_blk
     if(bio_read((superblock.i_start_blk + i_blkno), i_blk) < 0) {
         free(i_blk);
         return -1;
     }
 
+    // copy inode into block
     memcpy(&i_blk[indx], inode, sizeof(struct inode));
+
+    // write to disk
     if(bio_write((superblock.i_start_blk + i_blkno), i_blk) < 0) {
         free(i_blk);
         return -1;
@@ -197,6 +201,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
     int DISK_ERROR = 0;
     int FOUND = 0;
+    int STOP = 0;
 
     char delim [2] = "/";
     char *fname_CPY1 = strdup(fname);
@@ -225,7 +230,10 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
     // Step 3: Read directory's data block and check each directory entry.
     // If the name matches, then copy directory entry to dirent structure
-    for(char *path = strtok(fname_CPY1, delim); path != NULL; path = strtok(NULL, delim)) {
+    char *path;
+    if (fname[0] == '/') path = "/";
+    else path = strtok(NULL, delim);
+    for(; path != NULL; path = strtok(NULL, delim)) {
 
         // reset found to 0
         FOUND = 0;
@@ -236,7 +244,10 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
             for(int j = 0; j < 16; ++j) {
 
                 // if unused section of direct array has been reached
-                if(ptr_blk[j] < 0) break;
+                if(ptr_blk[j] < 0) {
+                    STOP = 1;
+                    break;
+                }
 
                 // clear block
                 memset(dirent_blk, 0, BLOCK_SIZE);
@@ -273,7 +284,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
             }
 
             // if the directory/subdirectory has been found or if a disk error occurred
-            if(FOUND || DISK_ERROR) break;
+            if(FOUND || STOP || DISK_ERROR) break;
 
             // if we haven't checked all indirect array entries
             if((++i) < 8) {
@@ -332,7 +343,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
     }
     // get directory/file basename
     char *f_basename = basename(fname_CPY1);
-    // get parent directory
+    // get parent directory name
     char *f_dirname = dirname(fname_CPY2);
     struct dirent f_dirent = { .valid = 1, .ino = f_ino };
     strcpy(f_dirent.name, fname);
@@ -340,15 +351,25 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 
     // Step 1: Read dir_inode's data block and check each directory entry of dir_inode
 	// Step 2: Check if fname (directory name) is already used in other entries
-    if(dir_find(dir_inode.ino, f_dirname, strlen(f_dirname), &dirent)) {
-        free(fname_CPY1);
-        free(fname_CPY2);
-        free(dirent_blk);
-        free(ptr_blk);
-        return -1;
+
+    // If dir_inode isn't already the current directory
+    if(strcmp(fname, "/")
+    && strcmp(fname, ".")
+    && !((dir_inode.ino == 0) && (strcmp(fname, "..")))
+    ) {
+        // get directory inode
+        if(dir_find(dir_inode.ino, f_dirname, strlen(f_dirname), &dirent)) {
+            free(fname_CPY1);
+            free(fname_CPY2);
+            free(dirent_blk);
+            free(ptr_blk);
+            return -1;
+        }
+        readi(dirent.ino, &dir_inode);
     }
 
-    readi(dirent.ino, &dir_inode);
+
+    // check if a directory of the same name already exists
     if(!dir_find(dir_inode.ino, f_basename, strlen(f_basename), &dirent)) {
         perror("Directory already exists");
         free(fname_CPY1);
@@ -381,6 +402,9 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
                     DISK_ERROR = 1;
                     break;
                 }
+
+                // copy dirent entry into first spot of dirent block
+                memcpy(&dirent_blk[0], &f_dirent, sizeof(struct dirent));
             } else {
 
                 // read block from pointer array entry
@@ -760,16 +784,15 @@ int tfs_mkfs() {
         root_inode.indirect_ptr[i] = -1;
     }
 
-
-    // write root inode to disk
-    writei(root_inode.ino, &root_inode);
-
     // link directory entry blocks to pointer arrays
     if(dir_add(root_inode, root_inode.ino, "/", strlen("/"))
     || dir_add(root_inode, root_inode.ino, ".", strlen("."))
     || dir_add(root_inode, root_inode.ino, "..", strlen(".."))
     ) DISK_ERROR = 1;
 
+
+    // write root inode to disk
+    writei(root_inode.ino, &root_inode);
 
     free(blk);
     if(DISK_ERROR) {
