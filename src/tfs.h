@@ -20,6 +20,7 @@
 #define MAX_INUM 1024
 #define MAX_DNUM (DISK_SIZE - (1 + 2 + MAX_INUM)*BLOCK_SIZE)/BLOCK_SIZE
 
+#define DEBUG 0
 #define ERROR(format, ...) fprintf(stderr, "[ERROR] %s:%d: error [%s] " format "\n", __func__, __LINE__, strerror(errno), ##__VA_ARGS__)
 #define TRACEBACK fprintf(stderr, "[TRACEBACK] %s:%d\n", __func__, __LINE__)
 
