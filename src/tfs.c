@@ -30,8 +30,8 @@ char diskfile_path[PATH_MAX];
 
 // Declare your in-memory data structures here
 struct superblock superblock;
-unsigned char i_bitmap[MAX_INUM] = {0};
-unsigned char d_bitmap[MAX_DNUM] = {0};
+unsigned char i_bitmap[MAX_INUM/8] = {0};
+unsigned char d_bitmap[MAX_DNUM/8] = {0};
 
 int i_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
 int dirents_per_blk = (int)((double)BLOCK_SIZE/sizeof(struct dirent));
@@ -127,7 +127,7 @@ int get_avail_blkno() {
  */
 int readi(uint16_t ino, struct inode *inode) {
 
-    struct inode *i_blk = malloc(BLOCK_SIZE);
+    struct inode *i_blk = (struct inode *)malloc(BLOCK_SIZE);
     if(!i_blk) {
         perror("Failed to allocate memory");
         return -1;
@@ -154,7 +154,8 @@ int readi(uint16_t ino, struct inode *inode) {
 
 int writei(uint16_t ino, struct inode *inode) {
 
-    struct inode *i_blk = malloc(BLOCK_SIZE);
+    free(malloc(sizeof(int[35])));
+    struct inode *i_blk = calloc(1, BLOCK_SIZE);
     if(!i_blk) {
         perror("Failed to allocate memory");
         return -1;
@@ -165,6 +166,10 @@ int writei(uint16_t ino, struct inode *inode) {
 	// Step 2: Get the offset in the block where this inode resides on disk
     int indx = ino%i_per_blk;
     int i_blkno = (ino/i_per_blk) + (!indx);
+
+
+    // copy inode to inode block
+    memcpy(i_blk, inode, sizeof(struct inode));
 
 
 	// Step 3: Write inode to disk
@@ -725,10 +730,8 @@ int tfs_mkfs() {
     }
 
 
-    int dirent_blks = (3/dirents_per_blk) + ((3%dirents_per_blk) != 0);
-
-
     // update inode for root directory
+    int dirent_blks = (3/dirents_per_blk) + ((3%dirents_per_blk) != 0);
     struct inode root_inode = {
         .ino = 0,
         .valid = 1,
@@ -753,8 +756,8 @@ int tfs_mkfs() {
     // initialize inode direct and indirect pointer arrays
     for(int i = 0; i < 8; ++i) {
         root_inode.direct_ptr[i] = -1;
+        root_inode.direct_ptr[15-i] = -1;
         root_inode.indirect_ptr[i] = -1;
-        root_inode.indirect_ptr[15-i] = -1;
     }
 
 
@@ -971,8 +974,8 @@ static int tfs_mkdir(const char *path, mode_t mode) {
     time(&inode.vstat.st_ctime);
     for(int i = 0; i < 8; ++i) {
         inode.direct_ptr[i] = -1;
+        inode.direct_ptr[15-i] = -1;
         inode.indirect_ptr[i] = -1;
-        inode.indirect_ptr[15-i] = -1;
     }
     writei(inode.ino, &inode);
 
@@ -1088,8 +1091,8 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
     time(&inode.vstat.st_ctime);
     for(int i = 0; i < 8; ++i) {
         inode.direct_ptr[i] = -1;
+        inode.direct_ptr[15-i] = -1;
         inode.indirect_ptr[i] = -1;
-        inode.indirect_ptr[15-i] = -1;
     }
     writei(inode.ino, &inode);
 
@@ -1123,17 +1126,16 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
     int DISK_ERROR = 0;
     int END_OF_FILE = 0;
 
-    int bits_to_read = size*8;
+    int bytes_to_read = size;
     // if block and offset will reach max offset prematurely
     // if block and offset will reach max offset prematurely
-    if((bits_to_read + offset) > (BLOCK_SIZE*(9*16))) {
+    if((bytes_to_read + offset) > (BLOCK_SIZE*(9*16))) {
         perror("Offset and size will reach max possible data offset");
         return -1;
     }
     struct inode inode = {0};
-    int offset_bits = offset*8;
     int buffer_offset = 0;
-    int first_blk_indx = offset_bits/BLOCK_SIZE;
+    int first_blk_indx = offset/BLOCK_SIZE;
     int blk_indx;
     int blk_offset;
     void *data_blk = malloc(BLOCK_SIZE);
@@ -1178,12 +1180,12 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
             }
 
             // if the number of bits left to read is greater than the size of a block
-            if(bits_to_read > BLOCK_SIZE) {
+            if(bytes_to_read > BLOCK_SIZE) {
 
                 // if it's the starting block, calculate the block offset
                 // else block offset = 0
                 if(blk_indx == first_blk_indx) {
-                        blk_offset = offset_bits%BLOCK_SIZE;
+                        blk_offset = offset%BLOCK_SIZE;
                 } else  blk_offset = 0;
 
                 // copy bits to buffer
@@ -1194,19 +1196,19 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
 
                 // update buffer offset and bits to read
                 buffer_offset += (BLOCK_SIZE-blk_offset);
-                bits_to_read -= (BLOCK_SIZE-blk_offset);
+                bytes_to_read -= (BLOCK_SIZE-blk_offset);
                 break;
             }
 
             // copy all bits left to read to buffer
-            memcpy(buffer+buffer_offset, data_blk, bits_to_read);
+            memcpy(buffer+buffer_offset, data_blk, bytes_to_read);
 
-            bits_to_read = 0;
+            bytes_to_read = 0;
             break;
         }
 
         // if all bits are read or a disk error occurs, break out of outer loop
-        if(!bits_to_read || END_OF_FILE || DISK_ERROR) break;
+        if(!bytes_to_read || END_OF_FILE || DISK_ERROR) break;
 
         // if we haven't checked all indirect array entries
         if((++i) < 8) {
@@ -1226,28 +1228,27 @@ static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, s
     free(ptr_blk);
     if(DISK_ERROR) return -1;
     // Note: this function should return the amount of bytes you copied to buffer
-	return size-(bits_to_read/8);
+	return size-bytes_to_read;
 }
 
 static int tfs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     int DISK_ERROR = 0;
 
-    int bits_to_write = size*8;
+    int bytes_to_write = size;
     // if block and offset will reach max offset prematurely
-    if((bits_to_write+offset) > (BLOCK_SIZE*(9*16))) {
+    if((bytes_to_write+offset) > (BLOCK_SIZE*(9*16))) {
         perror("Offset and size will reach max possible data offset");
         return -1;
     }
     struct inode inode = {0};
-    int offset_bits = offset*8;
     int buffer_offset = 0;
-    int first_blk_indx = offset_bits/BLOCK_SIZE;
+    int first_blk_indx = offset/BLOCK_SIZE;
     int blk_indx;
     int blk_offset;
     void *data_blk = malloc(BLOCK_SIZE);
     int *ptr_blk = malloc(BLOCK_SIZE);
     if(!data_blk
-       || !ptr_blk
+    || !ptr_blk
             ) {
         if(data_blk) free(data_blk);
         if(ptr_blk) free(ptr_blk);
@@ -1301,12 +1302,12 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
             }
 
             // if the number of bits left to read is greater than the size of a block
-            if(bits_to_write > BLOCK_SIZE) {
+            if(bytes_to_write > BLOCK_SIZE) {
 
                 // if it's the starting block, calculate the block offset
                 // else block offset = 0
                 if(blk_indx == first_blk_indx) {
-                    blk_offset = offset_bits%BLOCK_SIZE;
+                    blk_offset = offset%BLOCK_SIZE;
                 } else  blk_offset = 0;
 
                 // copy bits to block
@@ -1323,22 +1324,22 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
 
                 // update buffer offset and bits to read
                 buffer_offset += (BLOCK_SIZE-blk_offset);
-                bits_to_write -= (BLOCK_SIZE-blk_offset);
+                bytes_to_write -= (BLOCK_SIZE-blk_offset);
                 break;
             }
 
             // copy all bits left to write to block
             memcpy(data_blk,
                    (buffer+buffer_offset),
-                   bits_to_write
+                   bytes_to_write
             );
 
-            bits_to_write = 0;
+            bytes_to_write = 0;
             break;
         }
 
         // if all bits are written or a disk error occurs, break out of outer loop
-        if(!bits_to_write || DISK_ERROR) break;
+        if(!bytes_to_write || DISK_ERROR) break;
 
         // if we haven't checked all indirect array entries
         if((++i) < 8) {
@@ -1358,7 +1359,7 @@ static int tfs_write(const char *path, const char *buffer, size_t size, off_t of
     free(data_blk);
     free(ptr_blk);
     // Note: this function should return the amount of bytes you write to disk
-    return size-(bits_to_write/8);
+    return size-bytes_to_write;
 }
 
 static int tfs_unlink(const char *path) {
